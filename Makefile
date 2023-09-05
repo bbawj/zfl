@@ -5,3 +5,6 @@ zfl: zfl.c
 
 build_server:
 	west build --build-dir="./zflserver/out" -b qemu_x86 -o="--jobs=8" "./zflserver" -- -G"Unix Makefiles" -DEXTRA_CONF_FILE=overlay-e1000.conf
+
+build_client:
+	west build --build-dir="./zflclient/out" -b qemu_x86 -o="--jobs=8" "./zflclient" -- -G"Unix Makefiles"

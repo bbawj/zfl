@@ -62,6 +62,7 @@ if [ `id -u` != 0 ]; then
 fi
 
 IFACE=zeth
+IFACE2=zeth
 
 # Default config file setups default connectivity IP addresses
 CONF_FILE=./zeth.conf
@@ -77,6 +78,10 @@ do
 	    IFACE="$2"
 	    shift 2
 	    ;;
+	--iface2|-i2)
+	    IFACE2="$2"
+	    shift 2
+	    ;;
 	--help|-h)
 	    usage
 	    ;;
@@ -86,6 +91,14 @@ do
 	    ;;
 	down|stop)
 	    ACTION=stop
+	    shift
+	    ;;
+	bridgeup)
+	    ACTION=bridgeup
+	    shift
+	    ;;
+	bridgedown)
+	    ACTION=bridgedown
 	    shift
 	    ;;
 	*)
@@ -112,13 +125,27 @@ ctrl_c() {
     STOPPED=1
 }
 
-if [ "$ACTION" != stop ]; then
+if [ "$ACTION" == start ]; then
     echo "Creating $IFACE"
     ip tuntap add $IFACE mode tap $@
 
     # The idea is that the configuration file will setup
     # the IP addresses etc. for the created interface.
     . "$CONF_FILE" $IFACE
+fi
+
+if [ "$ACTION" == bridgeup ]; then
+    echo "Setting up bridging between $IFACE and $IFACE2"
+    brctl addbr zeth-br
+    brctl addif zeth-br $IFACE
+    brctl addif zeth-br $IFACE2
+    ifconfig zeth-br up
+fi
+
+if [ "$ACTION" == bridgedown ]; then
+    echo "Tearing down bridging between $IFACE and $IFACE2"
+    ifconfig zeth-br down
+    brctl delbr zeth-br
 fi
 
 if [ "$ACTION" = "" ]; then
