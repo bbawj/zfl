@@ -11,7 +11,7 @@ const char *netsetup_path = "./net-setup.sh";
 const char *zflserver_conf = "zflserver.conf";
 const char *zflserver_i = "zflserver.1";
 
-int setup_net_interface(char *conf, char *command, char *iname)
+int setup_net_interface(const char *conf, const char *command, const char *iname)
 {
 	pid_t child = fork();
 	if (child < 0) {
@@ -103,7 +103,7 @@ int start_server(void)
 
 int start_client(void)
 {
-	char *dir = "./zflclient";
+	char *dir = "./http_client";
 	char build_dir[100];
 	snprintf(build_dir, sizeof(build_dir), "%s/out", dir);
 
@@ -117,15 +117,6 @@ int start_client(void)
 			fprintf(stderr, "ERROR: could not fork client: %s\n", strerror(errno));
 			return 1;
 		}
-
-		if (snprintf(zflclient_i, sizeof(zflclient_i), "zflclient.%d", i + 1) < 0) {
-			fprintf(stderr, "ERROR: could not format zflclient_i\n");
-			return 1;
-		}
-		if (setup_net_interface("zflclient.conf", "start", zflclient_i) == -1) {
-			fprintf(stderr, "ERROR: failed to setup zflclient %s\n", zflclient_i);
-			return 1;
-		};
 
 		if (snprintf(qemu_instance, 80, "QEMU_INSTANCE=%d", i + 2) < 0) {
 			fprintf(stderr, "ERROR: could not format QEMU_INSTANCE\n");

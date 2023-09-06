@@ -154,7 +154,7 @@ if [ "$ACTION" = "" ]; then
     done
 fi
 
-if [ "$ACTION" != start ]; then
+if [ "$ACTION" == stop ]; then
     ip link set $IFACE down
 
     if [ -f "$CONF_FILE".stop ]; then

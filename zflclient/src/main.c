@@ -5,14 +5,14 @@
  */
 
 #include <stdio.h>
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(net_http_client_sample, LOG_LEVEL_DBG);
+// #include <zephyr/logging/log.h>
+// LOG_MODULE_REGISTER(net_http_client_sample, LOG_LEVEL_DBG);
 
 #include <zephyr/net/net_ip.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/net/http/client.h>
 
-#define HTTP_PORT  8000
+#define HTTP_PORT  8080
 #define HTTPS_PORT 4443
 
 #if defined(CONFIG_NET_CONFIG_PEER_IPV6_ADDR)
@@ -53,40 +53,22 @@ static int setup_socket(sa_family_t family, const char *server, int port, int *s
 	*sock = zsock_socket(family, SOCK_STREAM, IPPROTO_TCP);
 
 	if (*sock < 0) {
-		LOG_ERR("Failed to create %s HTTP socket (%d)", family_str, -errno);
+		printf("Failed to create %s HTTP socket (%d)\n", family_str, -errno);
 	}
 
 	return ret;
 }
 
-static int payload_cb(int sock, struct http_request *req, void *user_data)
-{
-	const char *content[] = {"foobar", "chunked", "last"};
-	char tmp[64];
-	int i, pos = 0;
-
-	for (i = 0; i < ARRAY_SIZE(content); i++) {
-		pos += snprintk(tmp + pos, sizeof(tmp) - pos, "%x\r\n%s\r\n",
-				(unsigned int)strlen(content[i]), content[i]);
-	}
-
-	pos += snprintk(tmp + pos, sizeof(tmp) - pos, "0\r\n\r\n");
-
-	(void)zsock_send(sock, tmp, pos, 0);
-
-	return pos;
-}
-
 static void response_cb(struct http_response *rsp, enum http_final_call final_data, void *user_data)
 {
 	if (final_data == HTTP_DATA_MORE) {
-		LOG_INF("Partial data received (%zd bytes)", rsp->data_len);
+		printf("Partial data received (%zd bytes)\n", rsp->data_len);
 	} else if (final_data == HTTP_DATA_FINAL) {
-		LOG_INF("All the data received (%zd bytes)", rsp->data_len);
+		printf("All the data received (%zd bytes)\n", rsp->data_len);
 	}
 
-	LOG_INF("Response to %s", (const char *)user_data);
-	LOG_INF("Response status %s", rsp->http_status);
+	printf("Response to %s\n", (const char *)user_data);
+	printf("Response status %s\n", rsp->http_status);
 }
 
 static int connect_socket(sa_family_t family, const char *server, int port, int *sock,
@@ -101,8 +83,8 @@ static int connect_socket(sa_family_t family, const char *server, int port, int 
 
 	ret = zsock_connect(*sock, addr, addr_len);
 	if (ret < 0) {
-		LOG_ERR("Cannot connect to %s remote (%d)", family == AF_INET ? "IPv4" : "IPv6",
-			-errno);
+		printf("Cannot connect to %s remote (%d)\n", family == AF_INET ? "IPv4" : "IPv6",
+		       -errno);
 		ret = -errno;
 	}
 
@@ -129,7 +111,7 @@ static int run_queries(void)
 	}
 
 	if (sock4 < 0 && sock6 < 0) {
-		LOG_ERR("Cannot create HTTP connection.");
+		printf("Cannot create HTTP connection.\n");
 		return -ECONNABORTED;
 	}
 
@@ -176,7 +158,7 @@ int main(void)
 {
 	int ret;
 
-	printf("Beginning queries\n");
+	printk("Beginning queries\n");
 	ret = run_queries();
 	if (ret < 0) {
 		exit(1);
