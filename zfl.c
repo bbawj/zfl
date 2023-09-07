@@ -20,13 +20,13 @@ int setup_net_interface(const char *conf, const char *command, const char *iname
 	}
 	if (child == 0) {
 		int ret = execlp(netsetup_path,
-				 // "sudo",
-				 netsetup_path, "-c", conf, "-i", iname, command, NULL);
+				// "sudo",
+				netsetup_path, "-c", conf, "-i", iname, command, NULL);
 
 		if (ret < 0) {
 			fprintf(stderr,
-				"ERROR: could not run net-setup for %s %s as a child process: %s\n",
-				iname, command, strerror(errno));
+					"ERROR: could not run net-setup for %s %s as a child process: %s\n",
+					iname, command, strerror(errno));
 			exit(EXIT_FAILURE);
 		}
 	}
@@ -46,13 +46,13 @@ int setup_bridging(char *command, char *iname)
 	}
 	if (child == 0) {
 		int ret = execlp(netsetup_path,
-				 // "sudo",
-				 netsetup_path, "-c", zflserver_conf, "-i", iname, "-i2",
-				 zflserver_i, command, NULL);
+				// "sudo",
+				netsetup_path, "-c", zflserver_conf, "-i", iname, "-i2",
+				zflserver_i, command, NULL);
 		if (ret < 0) {
 			fprintf(stderr,
-				"ERROR: could not run net-setup for %s %s as a child process: %s\n",
-				iname, command, strerror(errno));
+					"ERROR: could not run net-setup for %s %s as a child process: %s\n",
+					iname, command, strerror(errno));
 			exit(EXIT_FAILURE);
 		}
 	}
@@ -82,18 +82,18 @@ int start_server(void)
 	if (child == 0) {
 		int ret = execlp("make", "make", "run",
 
-				 "-C", build_dir,
+				"-C", build_dir,
 
-				 qemu_instance,
+				qemu_instance,
 
-				 "-j", "8",
+				"-j", "8",
 
-				 NULL);
+				NULL);
 		if (ret < 0) {
 			fprintf(stderr,
-				"ERROR: could not run server start as a child process: "
-				"%s\n",
-				strerror(errno));
+					"ERROR: could not run server start as a child process: "
+					"%s\n",
+					strerror(errno));
 			exit(1);
 		}
 	}
@@ -126,17 +126,17 @@ int start_client(void)
 		if (child == 0) {
 			int ret = execlp("make", "make", "run",
 
-					 "-C", build_dir,
+					"-C", build_dir,
 
-					 qemu_instance,
+					qemu_instance,
 
-					 "-j", "8", NULL);
+					"-j", "8", "-k", NULL);
 			if (ret < 0) {
 				fprintf(stderr,
-					"ERROR: could not run start client as a child "
-					"process: "
-					"%s\n",
-					strerror(errno));
+						"ERROR: could not run start client as a child "
+						"process: "
+						"%s\n",
+						strerror(errno));
 				exit(1);
 			}
 		}

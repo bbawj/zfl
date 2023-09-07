@@ -207,125 +207,125 @@ static int run_queries(void)
 		close(sock6);
 	}
 
-	sock4 = -1;
-	sock6 = -1;
-
-	if (IS_ENABLED(CONFIG_NET_IPV4)) {
-		(void)connect_socket(AF_INET, SERVER_ADDR4, port, &sock4, (struct sockaddr *)&addr4,
-				     sizeof(addr4));
-	}
-
-	if (IS_ENABLED(CONFIG_NET_IPV6)) {
-		(void)connect_socket(AF_INET6, SERVER_ADDR6, port, &sock6,
-				     (struct sockaddr *)&addr6, sizeof(addr6));
-	}
-
-	if (sock4 < 0 && sock6 < 0) {
-		LOG_ERR("Cannot create HTTP connection.");
-		return -ECONNABORTED;
-	}
-
-	if (sock4 >= 0 && IS_ENABLED(CONFIG_NET_IPV4)) {
-		struct http_request req;
-
-		memset(&req, 0, sizeof(req));
-
-		req.method = HTTP_POST;
-		req.url = "/foobar";
-		req.host = SERVER_ADDR4;
-		req.protocol = "HTTP/1.1";
-		req.payload = "foobar";
-		req.payload_len = strlen(req.payload);
-		req.response = response_cb;
-		req.recv_buf = recv_buf_ipv4;
-		req.recv_buf_len = sizeof(recv_buf_ipv4);
-
-		ret = http_client_req(sock4, &req, timeout, "IPv4 POST");
-
-		close(sock4);
-	}
-
-	if (sock6 >= 0 && IS_ENABLED(CONFIG_NET_IPV6)) {
-		struct http_request req;
-
-		memset(&req, 0, sizeof(req));
-
-		req.method = HTTP_POST;
-		req.url = "/";
-		req.host = SERVER_ADDR6;
-		req.protocol = "HTTP/1.1";
-		req.payload = "foobar";
-		req.payload_len = strlen(req.payload);
-		req.response = response_cb;
-		req.recv_buf = recv_buf_ipv6;
-		req.recv_buf_len = sizeof(recv_buf_ipv6);
-
-		ret = http_client_req(sock6, &req, timeout, "IPv6 POST");
-
-		close(sock6);
-	}
-
-	/* Do a chunked POST request */
-
-	sock4 = -1;
-	sock6 = -1;
-
-	if (IS_ENABLED(CONFIG_NET_IPV4)) {
-		(void)connect_socket(AF_INET, SERVER_ADDR4, port, &sock4, (struct sockaddr *)&addr4,
-				     sizeof(addr4));
-	}
-
-	if (IS_ENABLED(CONFIG_NET_IPV6)) {
-		(void)connect_socket(AF_INET6, SERVER_ADDR6, port, &sock6,
-				     (struct sockaddr *)&addr6, sizeof(addr6));
-	}
-
-	if (sock4 < 0 && sock6 < 0) {
-		LOG_ERR("Cannot create HTTP connection.");
-		return -ECONNABORTED;
-	}
-
-	if (sock4 >= 0 && IS_ENABLED(CONFIG_NET_IPV4)) {
-		struct http_request req;
-		const char *headers[] = {"Transfer-Encoding: chunked\r\n", NULL};
-
-		memset(&req, 0, sizeof(req));
-
-		req.method = HTTP_POST;
-		req.url = "/chunked-test";
-		req.host = SERVER_ADDR4;
-		req.protocol = "HTTP/1.1";
-		req.payload_cb = payload_cb;
-		req.header_fields = headers;
-		req.response = response_cb;
-		req.recv_buf = recv_buf_ipv4;
-		req.recv_buf_len = sizeof(recv_buf_ipv4);
-
-		ret = http_client_req(sock4, &req, timeout, "IPv4 POST");
-
-		close(sock4);
-	}
-
-	if (sock6 >= 0 && IS_ENABLED(CONFIG_NET_IPV6)) {
-		struct http_request req;
-		const char *headers[] = {"Transfer-Encoding: chunked\r\n", NULL};
-
-		memset(&req, 0, sizeof(req));
-
-		req.method = HTTP_POST;
-		req.url = "/chunked-test";
-		req.host = SERVER_ADDR6;
-		req.protocol = "HTTP/1.1";
-		req.payload_cb = payload_cb;
-		req.header_fields = headers;
-		req.response = response_cb;
-		req.recv_buf = recv_buf_ipv6;
-		req.recv_buf_len = sizeof(recv_buf_ipv6);
-
-		ret = http_client_req(sock6, &req, timeout, "IPv6 POST");
-
-		close(sock6);
-	}
+	// sock4 = -1;
+	// sock6 = -1;
+	//
+	// if (IS_ENABLED(CONFIG_NET_IPV4)) {
+	// 	(void)connect_socket(AF_INET, SERVER_ADDR4, port, &sock4, (struct sockaddr *)&addr4,
+	// 			     sizeof(addr4));
+	// }
+	//
+	// if (IS_ENABLED(CONFIG_NET_IPV6)) {
+	// 	(void)connect_socket(AF_INET6, SERVER_ADDR6, port, &sock6,
+	// 			     (struct sockaddr *)&addr6, sizeof(addr6));
+	// }
+	//
+	// if (sock4 < 0 && sock6 < 0) {
+	// 	LOG_ERR("Cannot create HTTP connection.");
+	// 	return -ECONNABORTED;
+	// }
+	//
+	// if (sock4 >= 0 && IS_ENABLED(CONFIG_NET_IPV4)) {
+	// 	struct http_request req;
+	//
+	// 	memset(&req, 0, sizeof(req));
+	//
+	// 	req.method = HTTP_POST;
+	// 	req.url = "/foobar";
+	// 	req.host = SERVER_ADDR4;
+	// 	req.protocol = "HTTP/1.1";
+	// 	req.payload = "foobar";
+	// 	req.payload_len = strlen(req.payload);
+	// 	req.response = response_cb;
+	// 	req.recv_buf = recv_buf_ipv4;
+	// 	req.recv_buf_len = sizeof(recv_buf_ipv4);
+	//
+	// 	ret = http_client_req(sock4, &req, timeout, "IPv4 POST");
+	//
+	// 	close(sock4);
+	// }
+	//
+	// if (sock6 >= 0 && IS_ENABLED(CONFIG_NET_IPV6)) {
+	// 	struct http_request req;
+	//
+	// 	memset(&req, 0, sizeof(req));
+	//
+	// 	req.method = HTTP_POST;
+	// 	req.url = "/";
+	// 	req.host = SERVER_ADDR6;
+	// 	req.protocol = "HTTP/1.1";
+	// 	req.payload = "foobar";
+	// 	req.payload_len = strlen(req.payload);
+	// 	req.response = response_cb;
+	// 	req.recv_buf = recv_buf_ipv6;
+	// 	req.recv_buf_len = sizeof(recv_buf_ipv6);
+	//
+	// 	ret = http_client_req(sock6, &req, timeout, "IPv6 POST");
+	//
+	// 	close(sock6);
+	// }
+	//
+	// /* Do a chunked POST request */
+	//
+	// sock4 = -1;
+	// sock6 = -1;
+	//
+	// if (IS_ENABLED(CONFIG_NET_IPV4)) {
+	// 	(void)connect_socket(AF_INET, SERVER_ADDR4, port, &sock4, (struct sockaddr *)&addr4,
+	// 			     sizeof(addr4));
+	// }
+	//
+	// if (IS_ENABLED(CONFIG_NET_IPV6)) {
+	// 	(void)connect_socket(AF_INET6, SERVER_ADDR6, port, &sock6,
+	// 			     (struct sockaddr *)&addr6, sizeof(addr6));
+	// }
+	//
+	// if (sock4 < 0 && sock6 < 0) {
+	// 	LOG_ERR("Cannot create HTTP connection.");
+	// 	return -ECONNABORTED;
+	// }
+	//
+	// if (sock4 >= 0 && IS_ENABLED(CONFIG_NET_IPV4)) {
+	// 	struct http_request req;
+	// 	const char *headers[] = {"Transfer-Encoding: chunked\r\n", NULL};
+	//
+	// 	memset(&req, 0, sizeof(req));
+	//
+	// 	req.method = HTTP_POST;
+	// 	req.url = "/chunked-test";
+	// 	req.host = SERVER_ADDR4;
+	// 	req.protocol = "HTTP/1.1";
+	// 	req.payload_cb = payload_cb;
+	// 	req.header_fields = headers;
+	// 	req.response = response_cb;
+	// 	req.recv_buf = recv_buf_ipv4;
+	// 	req.recv_buf_len = sizeof(recv_buf_ipv4);
+	//
+	// 	ret = http_client_req(sock4, &req, timeout, "IPv4 POST");
+	//
+	// 	close(sock4);
+	// }
+	//
+	// if (sock6 >= 0 && IS_ENABLED(CONFIG_NET_IPV6)) {
+	// 	struct http_request req;
+	// 	const char *headers[] = {"Transfer-Encoding: chunked\r\n", NULL};
+	//
+	// 	memset(&req, 0, sizeof(req));
+	//
+	// 	req.method = HTTP_POST;
+	// 	req.url = "/chunked-test";
+	// 	req.host = SERVER_ADDR6;
+	// 	req.protocol = "HTTP/1.1";
+	// 	req.payload_cb = payload_cb;
+	// 	req.header_fields = headers;
+	// 	req.response = response_cb;
+	// 	req.recv_buf = recv_buf_ipv6;
+	// 	req.recv_buf_len = sizeof(recv_buf_ipv6);
+	//
+	// 	ret = http_client_req(sock6, &req, timeout, "IPv6 POST");
+	//
+	// 	close(sock6);
+	// }
 
 	return ret;
 }

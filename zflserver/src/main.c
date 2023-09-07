@@ -6,8 +6,8 @@
 
 int main(void)
 {
-	const char *content = "HTTP/1.0 200 OK\r\nContent-Type: text/plain; "
-			      "charset=utf-8\r\n\nPlain-text example.";
+	static const char content[] = "HTTP/1.0 200 OK\r\nContent-Type: text/plain; "
+				      "charset=utf-8\r\n\nPlain-text example.";
 	int serv;
 	static int counter;
 	struct sockaddr_in bind_addr;
@@ -41,21 +41,46 @@ int main(void)
 		struct sockaddr_in client_addr;
 		socklen_t client_addr_len = sizeof(client_addr);
 		char addr_str[INET_ADDRSTRLEN];
+		char buf[100];
 		int client = zsock_accept(serv, (struct sockaddr *)&client_addr, &client_addr_len);
 		if (client < 0) {
-			printf("Error in accept: %d - continuing\n", errno);
+			printf("Error in accept: %s - continuing\n", strerror(errno));
 			continue;
 		}
 		zsock_inet_ntop(client_addr.sin_family, &client_addr.sin_addr, addr_str,
 				sizeof(addr_str));
 		printf("Connection #%d from %s\n", counter++, addr_str);
 
-		int sent_len = zsock_send(client, content, strlen(content), 0);
-
-		if (sent_len == -1) {
-			fprintf(stderr, "Error sending data to peer, errno: %s\n", strerror(errno));
-			break;
+		ssize_t r = zsock_recv(client, buf, sizeof(buf), 0);
+		buf[r] = '\0';
+		if (r == 0) {
+			goto close_client;
+		} else if (r < 0) {
+			fprintf(stderr, "ERROR: failed to receive data %s\n", strerror(errno));
+			goto close_client;
+		}
+		// TODO: parse HTTP request
+		printf("SERVER: %zu byte payload received %s\n", r, buf);
+		const char *data = content;
+		size_t len = sizeof(content);
+		while (len) {
+			int sent_len = zsock_send(client, data, len, 0);
+			if (sent_len == -1) {
+				printf("Error sending data to peer, errno: %s\n", strerror(errno));
+				break;
+			}
+			data += sent_len;
+			len -= sent_len;
+		}
+		int ret;
+close_client:
+		ret = zsock_close(client);
+		if (ret == 0) {
+			printf("Connection from %s closed\n", addr_str);
+		} else {
+			printf("Got error %s while closing the "
+			       "socket\n", strerror(errno));
 		}
 	}
-	return 1;
+	exit(0);
 }
