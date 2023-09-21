@@ -4,7 +4,11 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(dumb_http_server)
 
-FILE(GLOB app_sources src/*.c)
+FILE(GLOB app_sources src/*)
 target_sources(app PRIVATE ${app_sources})
+
+set(gen_dir ${ZEPHYR_BINARY_DIR}/include/generated/)
+set(source_file src/data/train-images-1)
+generate_inc_file_for_target(app ${source_file} ${gen_dir}/file.bin.inc)
 
 include(${ZEPHYR_BASE}/samples/net/common/common.cmake)

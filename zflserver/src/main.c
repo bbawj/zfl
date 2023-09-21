@@ -1,11 +1,26 @@
+#include "train.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <zephyr/net/socket.h>
+#include <zephyr/kernel.h>
+#include <zephyr/fs/fs.h>
+#include <zephyr/fs/ext2.h>
+#include <zephyr/device.h>
+#include <assert.h>
 
 #define BIND_PORT 8080
 
+static const unsigned char inc_file[] = {
+#include <file.bin.inc>
+};
+
 int main(void)
 {
+	setup();
+	printf("Model loaded!");
+	printf("Size of file %zu\n", sizeof(inc_file));
+	return 0;
 	static const char content[] = "HTTP/1.0 200 OK\r\nContent-Type: text/plain; "
 				      "charset=utf-8\r\n\nPlain-text example.";
 	int serv;

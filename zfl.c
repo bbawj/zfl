@@ -86,7 +86,7 @@ int start_server(void)
 
 				qemu_instance,
 
-				"-j", "8",
+				"-j", "8", "-k",
 
 				NULL);
 		if (ret < 0) {
@@ -103,7 +103,7 @@ int start_server(void)
 
 int start_client(void)
 {
-	char *dir = "./http_client";
+	char *dir = "./zfl_client";
 	char build_dir[100];
 	snprintf(build_dir, sizeof(build_dir), "%s/out", dir);
 
@@ -164,7 +164,7 @@ int start_client(void)
 int main(void)
 {
 	int clients = 1;
-	// Setup the server networking
+        // Setup the server networking
 	if (setup_net_interface(zflserver_conf, "start", zflserver_i) == EXIT_FAILURE) {
 		fprintf(stderr, "ERROR: failed to setup server conf\n");
 		return -1;
@@ -191,11 +191,11 @@ int main(void)
 	}
 	printf("Waiting for server to start\n");
 	sleep(5);
-	if (start_client() == EXIT_FAILURE) {
-		fprintf(stderr, "ERROR: failed to setup client\n");
-		goto shutdown;
-	}
-
+	// if (start_client() == EXIT_FAILURE) {
+	// 	fprintf(stderr, "ERROR: failed to setup client\n");
+	// 	goto shutdown;
+	// }
+	//
 	int status;
 	wait(&status);
 
