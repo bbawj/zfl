@@ -1,3 +1,5 @@
+#include "sb.h"
+#include "zflclient/src/sb.h"
 #include <assert.h>
 #include <errno.h>
 #include <stdbool.h>
@@ -19,9 +21,21 @@ int setup_net_interface(const char *conf, const char *command,
         return EXIT_FAILURE;
     }
     if (child == 0) {
+        StringBuilder sb = {0};
+        sb_init(&sb, 1024);
+        if (conf != NULL) {
+            sb_appendf(&sb, " -c %s", conf);
+        }
+        if (iname != NULL) {
+            sb_appendf(&sb, " -i %s", iname);
+        }
+        if (command != NULL) {
+            sb_appendf(&sb, " %s", command);
+        }
+        printf("Executing command: %s\n", sb.data);
         int ret = execlp(netsetup_path,
                          // "sudo",
-                         netsetup_path, "-c", conf, "-i", iname, command, NULL);
+                         netsetup_path, sb.data, NULL);
 
         if (ret < 0) {
             fprintf(stderr,
@@ -73,22 +87,9 @@ int start_server(void) {
         fprintf(stderr, "ERROR: could not fork server: %s\n", strerror(errno));
         return 1;
     }
-    char qemu_instance[80];
-    if (snprintf(qemu_instance, 80, "QEMU_INSTANCE=%d", 1) < 0) {
-        fprintf(stderr, "ERROR: could not format QEMU_INSTANCE\n");
-        exit(1);
-    }
-
     if (child == 0) {
-        int ret = execlp("make", "make", "run",
-
-                         "-C", build_dir,
-
-                         qemu_instance,
-
-                         "-j", "8", "-k",
-
-                         NULL);
+        chdir("./zflserver");
+        int ret = execlp("./server", "./server", NULL);
         if (ret < 0) {
             fprintf(stderr,
                     "ERROR: could not run server start as a child process: "
@@ -102,12 +103,11 @@ int start_server(void) {
 }
 
 int start_client(void) {
-    char *dir = "./zfl_client";
+    char *dir = "./zflclient";
     char build_dir[100];
     snprintf(build_dir, sizeof(build_dir), "%s/out", dir);
 
     char qemu_instance[80];
-    char zflclient_i[80];
 
     int instances = 1;
     for (int i = 0; i < instances; i++) {
@@ -146,112 +146,28 @@ int start_client(void) {
     for (int i = 0; i < instances; i++) {
         wait(&status);
 
-        if (WEXITSTATUS(status) == EXIT_FAILURE) {
+        if (WEXITSTATUS(status) == EXIT_FAILURE)
             return EXIT_FAILURE;
-        }
-        if (snprintf(zflclient_i, sizeof(zflclient_i), "zflclient.%d", i + 1) <
-            0) {
-            fprintf(stderr, "ERROR: could not format zflclient_i\n");
-            return EXIT_FAILURE;
-        }
-        if (setup_net_interface("zflclient.conf", "stop", zflclient_i) == -1) {
-            fprintf(stderr, "ERROR: failed to net stop zflclient %s\n",
-                    zflclient_i);
-            return EXIT_FAILURE;
-        };
     }
     return 0;
 }
 
 int main(void) {
-    if (setup_net_interface(zflserver_conf, "start", zflserver_i) ==
-        EXIT_FAILURE) {
-        fprintf(stderr, "ERROR: failed to setup server conf\n");
-        return -1;
-    }
-    if (start_server() == EXIT_FAILURE) {
-        fprintf(stderr, "ERROR: failed to setup server\n");
-    }
-
-    int status;
-    wait(&status);
-    if (WEXITSTATUS(status) == EXIT_FAILURE) {
-        fprintf(stderr, "ERROR: failed to setup server\n");
-    }
-    printf("Waiting for server to start\n");
-    if (setup_net_interface(zflserver_conf, "stop", zflserver_i) ==
-        EXIT_FAILURE) {
-        fprintf(stderr, "ERROR: failed to stop server conf\n");
-        return -1;
-    }
-    return 0;
-}
-
-int main2(void) {
-    int clients = 1;
+    // int clients = 1;
     // Setup the server networking
-    if (setup_net_interface(zflserver_conf, "start", zflserver_i) ==
-        EXIT_FAILURE) {
+    if (setup_net_interface(NULL, "start", NULL) == EXIT_FAILURE) {
         fprintf(stderr, "ERROR: failed to setup server conf\n");
         return -1;
     }
-    char zflclient_i[80];
-    for (int i = 0; i < clients; i++) {
-        if (snprintf(zflclient_i, sizeof(zflclient_i), "zflclient.%d", i + 1) <
-            0) {
-            fprintf(stderr, "ERROR: could not format zflclient_i\n");
-            return 1;
-        }
-        if (setup_net_interface("zflclient.conf", "start", zflclient_i) == -1) {
-            fprintf(stderr, "ERROR: failed to setup zflclient %s\n",
-                    zflclient_i);
-            return 1;
-        };
-        if (setup_bridging("bridgeup", zflclient_i) == -1) {
-            fprintf(stderr, "ERROR: failed to setup zflclient %s\n",
-                    zflclient_i);
-            return 1;
-        };
-    }
 
-    if (start_server() == EXIT_FAILURE) {
-        fprintf(stderr, "ERROR: failed to setup server\n");
-        goto shutdown;
-    }
-    printf("Waiting for server to start\n");
-    sleep(5);
-    // if (start_client() == EXIT_FAILURE) {
-    // 	fprintf(stderr, "ERROR: failed to setup client\n");
-    // 	goto shutdown;
-    // }
-    //
-    int status;
-    wait(&status);
+    start_server();
+    start_client();
 
-    if (WEXITSTATUS(status) == EXIT_FAILURE) {
-        fprintf(stderr, "ERROR: failed to setup server\n");
-        goto shutdown;
-    }
-shutdown:
-    if (setup_net_interface(zflserver_conf, "stop", zflserver_i) ==
-        EXIT_FAILURE) {
+    // server wait
+    wait(NULL);
+
+    if (setup_net_interface(NULL, "stop", NULL) == EXIT_FAILURE) {
         fprintf(stderr, "ERROR: failed to stop server conf\n");
         return -1;
-    }
-    for (int i = 0; i < clients; i++) {
-        if (snprintf(zflclient_i, sizeof(zflclient_i), "zflclient.%d", i + 1) <
-            0) {
-            fprintf(stderr, "ERROR: could not format zflclient_i\n");
-            return 1;
-        }
-        if (setup_net_interface("zflclient.conf", "stop", zflclient_i) == -1) {
-            fprintf(stderr, "ERROR: failed to stop zflclient %s\n",
-                    zflclient_i);
-            return 1;
-        };
-        if (setup_bridging("bridgedown", zflclient_i) == -1) {
-            fprintf(stderr, "ERROR: failed to bridgedown %s\n", zflclient_i);
-            return 1;
-        };
     }
 }

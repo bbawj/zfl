@@ -65,8 +65,8 @@ class Model(tf.Module):
     return restored_tensors
 
 if __name__ == "__main__":
-    fashion_mnist = tf.keras.datasets.fashion_mnist
-    (train_images, train_labels), (test_images, test_labels) = fashion_mnist.load_data()
+    mnist = tf.keras.datasets.mnist
+    (train_images, train_labels), (test_images, test_labels) = mnist.load_data()
     train_images = train_images[:30000]
     train_labels = train_labels[:30000]
     test_images = test_images[:30000]
@@ -94,32 +94,32 @@ if __name__ == "__main__":
         print(f"  loss: {losses[i]:.3f}")
 
     # Save the trained weights to a checkpoint.
-    m.save('/tmp/model.ckpt')
-    SAVED_MODEL_DIR = "saved_model"
-
-    tf.saved_model.save(
-        m,
-        SAVED_MODEL_DIR,
-        signatures={
-            'train':
-                m.train.get_concrete_function(),
-            'infer':
-                m.infer.get_concrete_function(),
-            'save':
-                m.save.get_concrete_function(),
-            'restore':
-                m.restore.get_concrete_function(),
-        })
-
-    #Convert the model
-    converter = tf.lite.TFLiteConverter.from_saved_model(SAVED_MODEL_DIR)
-    converter.target_spec.supported_ops = [
-        tf.lite.OpsSet.TFLITE_BUILTINS,  # enable TensorFlow Lite ops.
-        tf.lite.OpsSet.SELECT_TF_OPS  # enable TensorFlow ops.
-    ]
-    converter.experimental_enable_resource_variables = True
-    tflite_model = converter.convert()
-    # Save the model.
-    with open(f"./{SAVED_MODEL_DIR}/model.tflite", 'wb') as f:
-      f.write(tflite_model)
+    # m.save('/tmp/model.ckpt')
+    # SAVED_MODEL_DIR = "saved_model"
+    #
+    # tf.saved_model.save(
+    #     m,
+    #     SAVED_MODEL_DIR,
+    #     signatures={
+    #         'train':
+    #             m.train.get_concrete_function(),
+    #         'infer':
+    #             m.infer.get_concrete_function(),
+    #         'save':
+    #             m.save.get_concrete_function(),
+    #         'restore':
+    #             m.restore.get_concrete_function(),
+    #     })
+    #
+    # #Convert the model
+    # converter = tf.lite.TFLiteConverter.from_saved_model(SAVED_MODEL_DIR)
+    # converter.target_spec.supported_ops = [
+    #     tf.lite.OpsSet.TFLITE_BUILTINS,  # enable TensorFlow Lite ops.
+    #     tf.lite.OpsSet.SELECT_TF_OPS  # enable TensorFlow ops.
+    # ]
+    # converter.experimental_enable_resource_variables = True
+    # tflite_model = converter.convert()
+    # # Save the model.
+    # with open(f"./{SAVED_MODEL_DIR}/model.tflite", 'wb') as f:
+    #   f.write(tflite_model)
 
