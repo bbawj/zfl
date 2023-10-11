@@ -20,6 +20,8 @@ LOG_MODULE_REGISTER(zflserver, LOG_LEVEL_DBG);
 #define CONFIG_NET_CONFIG_PEER_IPV4_ADDR ""
 #endif
 
+static const char request_weights[] = "GET / ";
+
 static const char content[] = "HTTP/1.0 200 OK\r\nContent-Type: text/plain; "
                               "charset=utf-8\r\n\nPlain-text example.";
 
@@ -35,6 +37,22 @@ static int sendall(int sock, const char *buf, size_t len) {
     }
 
     return 0;
+}
+
+static int recvall(int sock, StringBuilder *sb) {
+    char buf[256];
+    size_t total = 0;
+    ssize_t r = zsock_recv(sock, buf, sizeof(buf), 0);
+    while (r > 0) {
+        total += r;
+        sb_append(sb, buf, r);
+        r = zsock_recv(sock, buf, sizeof(buf), 0);
+    }
+    if (r < 0) {
+        LOG_ERR("Failed to receive data %s\n", strerror(errno));
+        return r;
+    }
+    return total;
 }
 
 void start_server() {
@@ -82,35 +100,12 @@ void start_server() {
 
         StringBuilder sb = {0};
         sb_init(&sb, 1024);
-        char buf[256];
-        ssize_t r = zsock_recv(client, buf, sizeof(buf), 0);
-        while (r > 0) {
-            sb_append(&sb, buf, r);
-            r = zsock_recv(client, buf, sizeof(buf), 0);
+        int ret = recvall(client, &sb);
+        if (ret >= 0) {
+            char *payload = sb_string(&sb);
+            LOG_INF("SERVER: %d byte payload received %s\n", ret, payload);
+            // TODO: parse HTTP request
         }
-        if (r == 0) {
-            goto close_client;
-        } else if (r < 0) {
-            LOG_ERR("Failed to receive data %s\n", strerror(errno));
-            goto close_client;
-        }
-        // TODO: parse HTTP request
-        char *payload = sb_string(&sb);
-        LOG_INF("SERVER: %zu byte payload received %s\n", r, payload);
-        const char *data = content;
-        size_t len = sizeof(content);
-        while (len) {
-            int sent_len = zsock_send(client, data, len, 0);
-            if (sent_len == -1) {
-                LOG_ERR("Error sending data to peer, errno: %s\n",
-                        strerror(errno));
-                break;
-            }
-            data += sent_len;
-            len -= sent_len;
-        }
-        int ret;
-    close_client:
         ret = zsock_close(client);
         if (ret == 0) {
             LOG_INF("Connection from %s closed\n", addr_str);
@@ -124,10 +119,11 @@ void start_server() {
 
 #define THREAD_STACK_SIZE 1024
 #define THREAD_PRIORITY 5
+struct k_thread thread_data;
 
 K_THREAD_STACK_DEFINE(server_stack_area, THREAD_STACK_SIZE);
 k_tid_t start_async_server() {
-    struct k_thread thread_data;
+    LOG_INF("Attempting to create server thread\n");
     k_tid_t tid =
         k_thread_create(&thread_data, server_stack_area,
                         K_THREAD_STACK_SIZEOF(server_stack_area), start_server,
@@ -135,7 +131,7 @@ k_tid_t start_async_server() {
     return tid;
 }
 
-int send_weights() {
+int connect_main_server() {
     int serv;
     int ret;
     struct sockaddr_in addr4;
@@ -156,7 +152,32 @@ int send_weights() {
         return ret;
     }
     LOG_INF("Successfully connected to server\n");
-    ret = sendall(serv, content, sizeof(content));
+    return serv;
+}
+
+int req_weights() {
+    int serv = connect_main_server();
+    if (serv < 0) {
+        zsock_close(serv);
+        return serv;
+    }
+
+    int ret = sendall(serv, request_weights, sizeof(request_weights));
+    if (ret < 0) {
+        LOG_ERR("ERROR: could not send to socket: %s\n", strerror(errno));
+        return ret;
+    }
+    zsock_close(serv);
+    return 0;
+}
+
+int send_weights() {
+    int serv = connect_main_server();
+    if (serv < 0) {
+        zsock_close(serv);
+        return serv;
+    }
+    int ret = sendall(serv, content, sizeof(content));
     if (ret < 0) {
         LOG_ERR("ERROR: could not send to socket: %s\n", strerror(errno));
         return ret;
@@ -171,7 +192,8 @@ int main(void) {
         LOG_ERR("Failed to create thread\n");
         return -1;
     }
-    printf("Model loaded!\n");
-    train();
+    k_thread_join(tid, K_FOREVER);
+    // printf("Model loaded!\n");
+    // train();
     return 0;
 }

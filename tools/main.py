@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import json
 
 IMG_SIZE = 28
 
@@ -8,7 +9,7 @@ class Model(tf.Module):
   def __init__(self):
     self.model = tf.keras.Sequential([
         tf.keras.layers.Flatten(input_shape=(IMG_SIZE, IMG_SIZE), name='flatten'),
-        tf.keras.layers.Dense(128, activation='relu', name='dense_1'),
+        tf.keras.layers.Dense(16, activation='relu', name='dense_1'),
         tf.keras.layers.Dense(10, name='dense_2')
     ])
 
@@ -75,7 +76,7 @@ if __name__ == "__main__":
     test_images = (test_images / 255.0).astype(np.float32)
     train_labels = tf.keras.utils.to_categorical(train_labels)
     test_labels = tf.keras.utils.to_categorical(test_labels)
-    NUM_EPOCHS = 100
+    NUM_EPOCHS = 10
     BATCH_SIZE = 100
     epochs = np.arange(1, NUM_EPOCHS + 1, 1)
     losses = np.zeros([NUM_EPOCHS])
@@ -92,6 +93,24 @@ if __name__ == "__main__":
       if (i + 1) % 10 == 0:
         print(f"Finished {i+1} epochs")
         print(f"  loss: {losses[i]:.3f}")
+
+    json_dict = {}
+    for i, layer in enumerate(m.model.layers):
+        weights = layer.get_weights()
+        if len(weights) > 0:
+            kernel = np.array(weights[0]).tolist()
+            json_dict[f"{i}_kernel"] = kernel
+            print(f"Rows: {len(kernel)} Cols: {len(kernel[0])}\n")
+            bias = np.array(weights[1]).tolist()
+            json_dict[f"{i}_bias"] = bias
+            print(f"Rows: {len(bias)}\n")
+
+    path = "../zflserver/src/initial_weights.json"
+    weights = json.dumps(json_dict)
+    f = open(path, "w")
+    f.write(weights)
+    print(f"Successfully written weights to {path}")
+    f.close()
 
     # Save the trained weights to a checkpoint.
     # m.save('/tmp/model.ckpt')

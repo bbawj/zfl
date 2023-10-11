@@ -7,6 +7,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef SB_ALLOC
+#define SB_ALLOC malloc
+#endif
+
 typedef struct {
     size_t size;
     size_t cap;
@@ -15,7 +19,7 @@ typedef struct {
 
 void sb_init(StringBuilder *sb, size_t size) {
     sb->cap = size;
-    sb->data = malloc(size);
+    sb->data = SB_ALLOC(size);
     assert(sb->data);
 }
 
@@ -45,7 +49,7 @@ int sb_appendf(StringBuilder *sb, const char *format, ...) {
 }
 
 char *sb_string(StringBuilder *sb) {
-    char *s = malloc(sb->size + 1);
+    char *s = SB_ALLOC(sb->size + 1);
     s[sb->size] = '\0';
     return s;
 }
