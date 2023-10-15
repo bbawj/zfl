@@ -11,13 +11,14 @@
 #define PORT 8080
 #define PEER_PORT 8080
 
-#define CONFIG_NET_CONFIG_PEER_IPV4_ADDR "198.0.2.1"
+#define CONFIG_NET_CONFIG_PEER_IPV4_ADDR "192.0.2.1"
 
 int send_weights(int client_socket) {
-    const char *initial_weights_file = "initial_weights.json";
+    const char *initial_weights_file = "./initial_weights.json";
     FILE *fd = fopen(initial_weights_file, "r");
     if (fd == NULL) {
-        printf("ERROR: could not open file %s", initial_weights_file);
+        printf("ERROR: could not open file %s because: %s",
+               initial_weights_file, strerror(errno));
         return -1;
     }
     size_t total_sent = 0;

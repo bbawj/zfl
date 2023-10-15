@@ -94,19 +94,20 @@ if __name__ == "__main__":
         print(f"Finished {i+1} epochs")
         print(f"  loss: {losses[i]:.3f}")
 
-    json_dict = {}
+    json_arr = []
     for i, layer in enumerate(m.model.layers):
         weights = layer.get_weights()
         if len(weights) > 0:
             kernel = np.array(weights[0]).tolist()
-            json_dict[f"{i}_kernel"] = kernel
-            print(f"Rows: {len(kernel)} Cols: {len(kernel[0])}\n")
             bias = np.array(weights[1]).tolist()
-            json_dict[f"{i}_bias"] = bias
+
+            json_arr.append(kernel)
+            json_arr.append(bias)
+            print(f"Rows: {len(kernel)} Cols: {len(kernel[0])}\n")
             print(f"Rows: {len(bias)}\n")
 
-    path = "../zflserver/src/initial_weights.json"
-    weights = json.dumps(json_dict)
+    path = "../zflserver/initial_weights.json"
+    weights = json.dumps(json_arr)
     f = open(path, "w")
     f.write(weights)
     print(f"Successfully written weights to {path}")

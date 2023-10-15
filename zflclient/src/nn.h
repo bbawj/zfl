@@ -100,6 +100,7 @@ void mat_sum(Mat dst, Mat a);
 void mat_act(Mat m);
 void mat_print(Mat m, const char *name, size_t padding);
 void mat_shuffle_rows(Mat m);
+Mat mat_slice(Mat m, size_t from, size_t n);
 #define MAT_PRINT(m) mat_print(m, #m, 0)
 
 typedef struct {
@@ -127,6 +128,7 @@ void nn_rand(NN nn, float low, float high);
 // Something more like `Mat nn_forward(NN nn, Mat in)`
 void nn_forward(NN nn);
 float nn_cost(NN nn, Mat t);
+float nn_cross_entropy(NN nn, Mat t);
 NN nn_finite_diff(Region *r, NN nn, Mat t, float eps);
 NN nn_backprop(Region *r, NN nn, Mat t);
 void nn_learn(NN nn, NN g, float rate);
@@ -334,6 +336,28 @@ void nn_forward(NN nn) {
     }
 }
 
+float nn_cross_entropy(NN nn, Mat t) {
+    NN_ASSERT(NN_INPUT(nn).cols + NN_OUTPUT(nn).cols == t.cols);
+    size_t n = t.rows;
+
+    float c = 0;
+    for (size_t i = 0; i < n; ++i) {
+        Row row = mat_row(t, i);
+        Row x = row_slice(row, 0, NN_INPUT(nn).cols);
+        Row y = row_slice(row, NN_INPUT(nn).cols, NN_OUTPUT(nn).cols);
+
+        row_copy(NN_INPUT(nn), x);
+        nn_forward(nn);
+        size_t q = y.cols;
+        for (size_t j = 0; j < q; ++j) {
+            float d = logf(ROW_AT(NN_OUTPUT(nn), j)) / logf(2) * ROW_AT(y, j);
+            c += -d;
+        }
+    }
+
+    return c / n;
+}
+
 float nn_cost(NN nn, Mat t) {
     NN_ASSERT(NN_INPUT(nn).cols + NN_OUTPUT(nn).cols == t.cols);
     size_t n = t.rows;
@@ -479,6 +503,15 @@ void mat_shuffle_rows(Mat m) {
             }
         }
     }
+}
+
+Mat mat_slice(Mat m, size_t from, size_t n) {
+    Mat ret = {
+        .rows = n,
+        .cols = m.cols,
+        .elements = &MAT_AT(m, from, 0),
+    };
+    return ret;
 }
 
 void batch_process(Region *r, Batch *b, size_t batch_size, NN nn, Mat t,

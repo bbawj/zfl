@@ -25,7 +25,7 @@ void sb_init(StringBuilder *sb, size_t size) {
 
 int sb_append(StringBuilder *sb, char *data, size_t len) {
     if (sb->size + len > sb->cap) {
-        sb->data = realloc(sb->data, sb->cap * 2);
+        sb->data = realloc(sb->data, (sb->cap + len) * 2);
         sb->cap *= 2;
         assert(sb->data);
     }
@@ -50,6 +50,7 @@ int sb_appendf(StringBuilder *sb, const char *format, ...) {
 
 char *sb_string(StringBuilder *sb) {
     char *s = SB_ALLOC(sb->size + 1);
+    memcpy(s, sb->data, sb->size);
     s[sb->size] = '\0';
     return s;
 }

@@ -1,16 +1,24 @@
-#include "sb.h"
+#include <zephyr/logging/log.h>
+LOG_MODULE_REGISTER(zflclient, LOG_LEVEL_DBG);
+
 #include "train.h"
 
-#include <stdlib.h>
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(zflserver, LOG_LEVEL_DBG);
+#include <zephyr/kernel.h>
+
+// #define SB_ALLOC k_malloc
+#include "sb.h"
+
+#define CSON_ALLOC k_malloc
+#define CSON_FREE k_free
+#include "cson.h"
+
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <zephyr/device.h>
 #include <zephyr/fs/ext2.h>
 #include <zephyr/fs/fs.h>
-#include <zephyr/kernel.h>
 #include <zephyr/net/socket.h>
 
 #define BIND_PORT 8080
@@ -19,6 +27,8 @@ LOG_MODULE_REGISTER(zflserver, LOG_LEVEL_DBG);
 #if !defined(CONFIG_NET_CONFIG_PEER_IPV4_ADDR)
 #define CONFIG_NET_CONFIG_PEER_IPV4_ADDR ""
 #endif
+
+#define RANDOM_NN 1
 
 static const char request_weights[] = "GET / ";
 
@@ -142,13 +152,12 @@ int connect_main_server() {
     zsock_inet_pton(AF_INET, CONFIG_NET_CONFIG_PEER_IPV4_ADDR, &addr4.sin_addr);
     serv = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (serv == -1) {
-        LOG_ERR("ERROR: could not create server socket because %s\n",
-                strerror(errno));
+        LOG_ERR("could not create server socket because %s\n", strerror(errno));
         return -1;
     }
     ret = zsock_connect(serv, (struct sockaddr *)&addr4, sizeof(addr4));
-    if (ret < 0) {
-        LOG_ERR("ERROR: could not connect to socket: %s\n", strerror(errno));
+    if (ret == -1) {
+        LOG_ERR("could not connect to socket: %s\n", strerror(errno));
         return ret;
     }
     LOG_INF("Successfully connected to server\n");
@@ -164,10 +173,74 @@ int req_weights() {
 
     int ret = sendall(serv, request_weights, sizeof(request_weights));
     if (ret < 0) {
-        LOG_ERR("ERROR: could not send to socket: %s\n", strerror(errno));
+        LOG_ERR("could not send to socket: %s\n", strerror(errno));
         return ret;
     }
+    StringBuilder sb = {0};
+    sb_init(&sb, 100);
+    int received = recvall(serv, &sb);
+    char *content = sb_string(&sb);
+    LOG_INF("Received %d bytes\n", received);
     zsock_close(serv);
+    Cson c = {0};
+    c.b = content;
+    c.size = received;
+    c.cap = received;
+    c.cur = 0;
+
+    Token *json = parse_json(&c);
+    Token *weights = json->child;
+    Token *biases = weights->next;
+
+    float **initial_weights = malloc(sizeof(float *) * (ARCH_COUNT - 1));
+    assert(initial_weights);
+    float **initial_bias = malloc(sizeof(float *) * (ARCH_COUNT - 1));
+    assert(initial_bias);
+    for (int i = 0; i < ARCH_COUNT - 1; ++i) {
+        initial_weights[i] = malloc(sizeof(float) * ARCH[i] * ARCH[i + 1]);
+        initial_bias[i] = malloc(sizeof(float) * ARCH[i + 1]);
+    }
+
+    for (int i = 0; i < ARCH_COUNT - 1; ++i) {
+        Token *row = weights->child;
+        for (int j = 0; j < ARCH[i]; ++j) {
+            Token *col = row->child;
+            for (int k = 0; k < ARCH[i + 1]; ++k) {
+                initial_weights[i][j * ARCH[i + 1] + k] =
+                    strtof(col->text, NULL);
+                col = col->next;
+            }
+            row = row->next;
+        }
+        weights = weights->next->next;
+        Token *bias = biases->child;
+        for (int j = 0; j < ARCH[i + 1]; ++j) {
+            initial_bias[i][j] = strtof(bias->text, NULL);
+            bias = bias->next;
+        }
+
+        if (biases->next != NULL) {
+            biases = biases->next->next;
+        }
+    }
+    // pretty_print(json, 0);
+#if RANDOM_NN
+    train(NULL, NULL);
+#else
+    train(initial_weights, initial_bias);
+#endif /* if RANDOM_NN */
+
+    printf("Training completed!\n");
+    for (int i = 0; i < ARCH_COUNT - 1; ++i) {
+        free(initial_weights[i]);
+        free(initial_bias[i]);
+    }
+    free(initial_weights);
+    free(initial_bias);
+
+    free_tokens(json);
+    free(content);
+    free(sb.data);
     return 0;
 }
 
@@ -179,7 +252,7 @@ int send_weights() {
     }
     int ret = sendall(serv, content, sizeof(content));
     if (ret < 0) {
-        LOG_ERR("ERROR: could not send to socket: %s\n", strerror(errno));
+        LOG_ERR("could not send to socket: %s\n", strerror(errno));
         return ret;
     }
     zsock_close(serv);
@@ -192,6 +265,7 @@ int main(void) {
         LOG_ERR("Failed to create thread\n");
         return -1;
     }
+    req_weights();
     k_thread_join(tid, K_FOREVER);
     // printf("Model loaded!\n");
     // train();
