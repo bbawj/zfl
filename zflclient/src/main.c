@@ -4,12 +4,10 @@ LOG_MODULE_REGISTER(zflclient, LOG_LEVEL_DBG);
 #include "train.h"
 
 #include <zephyr/kernel.h>
+#include <zephyr/shell/shell.h>
 
-// #define SB_ALLOC k_malloc
 #include "sb.h"
 
-#define CSON_ALLOC k_malloc
-#define CSON_FREE k_free
 #include "cson.h"
 
 #include <assert.h>
@@ -24,13 +22,19 @@ LOG_MODULE_REGISTER(zflclient, LOG_LEVEL_DBG);
 #define BIND_PORT 8080
 #define PEER_PORT 8080
 
-#if !defined(CONFIG_NET_CONFIG_PEER_IPV4_ADDR)
-#define CONFIG_NET_CONFIG_PEER_IPV4_ADDR ""
-#endif
+#define RANDOM_NN 0
 
-#define RANDOM_NN 1
+const unsigned char *train_labels = NULL;
+const unsigned char *train_images = NULL;
+int train_labels_size = 0;
+int train_images_size = 0;
 
-static const char request_weights[] = "GET / ";
+static int ID = 0;
+
+static const char request_id[] = "GET /id ";
+static const char request_images[] = "GET /train-images";
+static const char request_labels[] = "GET /train-labels";
+static const char request_weights[] = "GET /weights ";
 
 static const char content[] = "HTTP/1.0 200 OK\r\nContent-Type: text/plain; "
                               "charset=utf-8\r\n\nPlain-text example.";
@@ -156,32 +160,72 @@ int connect_main_server() {
         return -1;
     }
     ret = zsock_connect(serv, (struct sockaddr *)&addr4, sizeof(addr4));
-    if (ret == -1) {
-        LOG_ERR("could not connect to socket: %s\n", strerror(errno));
+    if (ret < 0) {
+        LOG_ERR("could not connect to server socket: %s\n", strerror(errno));
         return ret;
     }
     LOG_INF("Successfully connected to server\n");
     return serv;
 }
 
-int req_weights() {
+char *get_request(const char *req, int *received) {
+    LOG_INF("Making get request to %s", req);
     int serv = connect_main_server();
     if (serv < 0) {
         zsock_close(serv);
-        return serv;
+        return NULL;
     }
 
-    int ret = sendall(serv, request_weights, sizeof(request_weights));
+    int ret = sendall(serv, req, strlen(req));
     if (ret < 0) {
         LOG_ERR("could not send to socket: %s\n", strerror(errno));
-        return ret;
+        return NULL;
     }
     StringBuilder sb = {0};
-    sb_init(&sb, 100);
-    int received = recvall(serv, &sb);
+    sb_init(&sb, 1024);
+    *received = recvall(serv, &sb);
     char *content = sb_string(&sb);
-    LOG_INF("Received %d bytes\n", received);
+    free(sb.data);
+    LOG_INF("Received %d bytes\n", *received);
     zsock_close(serv);
+    return content;
+}
+
+int req_id() {
+    int received = 0;
+    char *id_string = get_request(request_id, &received);
+    ID = atoi(id_string);
+    LOG_INF("Client ID is %d", ID);
+    return ID;
+}
+
+void req_images() {
+    int received = 0;
+    static char image_resource[100];
+    snprintf(image_resource, sizeof(image_resource), "%s-%d ", request_images,
+             ID);
+    train_images = get_request(image_resource, &received);
+    train_images_size = received;
+}
+
+void req_labels() {
+    int received = 0;
+    static char label_resource[100];
+    snprintf(label_resource, sizeof(label_resource), "%s-%d ", request_labels,
+             ID);
+    train_labels = get_request(label_resource, &received);
+    train_labels_size = received;
+}
+
+int req_weights() {
+    LOG_INF("Starting training");
+#if RANDOM_NN
+    train(NULL, NULL);
+#else
+    int received = 0;
+    char *content = get_request(request_weights, &received);
+
+    LOG_INF("Starting CSON...\n");
     Cson c = {0};
     c.b = content;
     c.size = received;
@@ -223,14 +267,9 @@ int req_weights() {
             biases = biases->next->next;
         }
     }
-    // pretty_print(json, 0);
-#if RANDOM_NN
-    train(NULL, NULL);
-#else
-    train(initial_weights, initial_bias);
-#endif /* if RANDOM_NN */
 
-    printf("Training completed!\n");
+    // pretty_print(json, 0);
+    train(initial_weights, initial_bias);
     for (int i = 0; i < ARCH_COUNT - 1; ++i) {
         free(initial_weights[i]);
         free(initial_bias[i]);
@@ -240,7 +279,9 @@ int req_weights() {
 
     free_tokens(json);
     free(content);
-    free(sb.data);
+#endif /* if RANDOM_NN */
+    LOG_INF("Training completed!\n");
+
     return 0;
 }
 
@@ -259,15 +300,39 @@ int send_weights() {
     return 0;
 }
 
-int main(void) {
-    k_tid_t tid = start_async_server();
-    if (tid == NULL) {
-        LOG_ERR("Failed to create thread\n");
+int run(const struct shell *sh, size_t argc, char **argv) {
+    // k_tid_t tid = start_async_server();
+    // if (tid == NULL) {
+    //     LOG_ERR("Failed to create thread\n");
+    //     return -1;
+    // }
+    if (argc < 2) {
+        LOG_ERR("ipv4 address not given");
+        return -1;
+    }
+    char *addr_str = argv[1];
+    struct in_addr addr;
+    zsock_inet_pton(AF_INET, addr_str, &addr);
+    if (!net_if_ipv4_addr_add(net_if_get_default(), &addr, NET_ADDR_MANUAL,
+                              UINT32_MAX)) {
+        LOG_ERR("failed to add %s to interface", addr_str);
+        return -1;
+    }
+
+    req_id();
+    req_images();
+    req_labels();
+    if (train_images == NULL || train_labels == NULL) {
+        LOG_ERR("train_labels or train_labels is NULL");
         return -1;
     }
     req_weights();
-    k_thread_join(tid, K_FOREVER);
+    // k_thread_join(tid, K_FOREVER);
     // printf("Model loaded!\n");
     // train();
     return 0;
 }
+
+SHELL_CMD_ARG_REGISTER(run, NULL, "Run with IPv4 address", run, 2, 0);
+
+int main(void) { LOG_INF("Ready"); }

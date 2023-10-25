@@ -6,17 +6,9 @@ LOG_MODULE_DECLARE(zflclient);
 #include "nn.h"
 #include <string.h>
 
-static const unsigned char train_images[] = {
-#include <train-images.bin.inc>
-};
-
-static const unsigned char train_labels[] = {
-#include <train-labels.bin.inc>
-};
-
 Mat training_data(Region *r, int from, int to) {
     assert(from < to);
-    assert(to <= NUM_IMAGES);
+    // assert(to <= NUM_IMAGES);
 
     Mat mat_train = mat_alloc(r, to - from, IMG_SIZE + 10);
 
@@ -75,9 +67,9 @@ float accuracy(NN nn, Mat t) {
 }
 
 void train(float **initial_weights, float **initial_bias) {
-    printf("Training image size is %zu\n", sizeof(train_images));
-    printf("Size of labels is %zu\n", sizeof(train_labels));
-
+    const int NUM_IMAGES = train_labels_size;
+    const int NUM_BATCHES = NUM_IMAGES / NUM_EPOCHS;
+    const int BATCH_SIZE = NUM_IMAGES / NUM_BATCHES;
     float rate = 1.0f;
     Region r = region_alloc_alloc(1024 * 1024);
     NN nn = nn_alloc(&r, ARCH, ARRAY_LEN(ARCH));

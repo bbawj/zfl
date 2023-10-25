@@ -61,7 +61,7 @@ if [ `id -u` != 0 ]; then
     exit
 fi
 
-IFACE=zeth
+IFACE=zfl
 IFACE2=zeth
 
 # Default config file setups default connectivity IP addresses
@@ -127,7 +127,7 @@ ctrl_c() {
 
 if [ "$ACTION" == start ]; then
     echo "Creating $IFACE"
-    ip tuntap add $IFACE mode tap $@
+    # ip tuntap add $IFACE mode tap $@
 
     # The idea is that the configuration file will setup
     # the IP addresses etc. for the created interface.
@@ -162,5 +162,6 @@ if [ "$ACTION" == stop ]; then
     fi
 
     echo "Removing $IFACE"
-    ip tuntap del $IFACE mode tap
+    # ip tuntap del $IFACE mode tap
+    ip link delete $IFACE
 fi

@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 int reverseInt(int i) {
     unsigned char c1, c2, c3, c4;
@@ -12,7 +13,7 @@ int reverseInt(int i) {
     return ((int)c1 << 24) + ((int)c2 << 16) + ((int)c3 << 8) + c4;
 }
 
-void read_mnist(int n_splits) {
+void read_mnist(int main_count, int n_splits) {
     FILE *file = fopen("./train-images.idx3-ubyte", "r");
     FILE *label_file = fopen("./train-labels.idx1-ubyte", "r");
     assert(file);
@@ -46,12 +47,10 @@ void read_mnist(int n_splits) {
     printf("magic: %d, number_of_labels: %d", label_magic_number,
            number_of_labels);
 
-    FILE *main_data = fopen("./train-images-main", "w");
-    FILE *main_label = fopen("./train-labels-main", "w");
+    FILE *main_data = fopen("../data/train-images-main", "w");
+    FILE *main_label = fopen("../data/train-labels-main", "w");
     assert(main_data);
     assert(main_label);
-
-    int main_count = number_of_images / 2;
 
     // fwrite((char *)&magic_number, sizeof(magic_number), 1, main_data);
     // fwrite((char *)&main_count, sizeof(number_of_images), 1, main_data);
@@ -75,10 +74,12 @@ void read_mnist(int n_splits) {
     int n_count = (number_of_images - main_count) / n_splits;
     for (int j = 0; j < n_splits; ++j) {
         char file_path[100];
-        snprintf(file_path, sizeof(file_path), "./train-images-%d", j + 1);
+        snprintf(file_path, sizeof(file_path), "../data/train-images-%d",
+                 j + 1);
         FILE *n_file = fopen(file_path, "w");
         assert(n_file);
-        snprintf(file_path, sizeof(file_path), "./train-labels-%d", j + 1);
+        snprintf(file_path, sizeof(file_path), "../data/train-labels-%d",
+                 j + 1);
         FILE *n_label_file = fopen(file_path, "w");
         assert(n_label_file);
 
@@ -100,4 +101,12 @@ void read_mnist(int n_splits) {
     fclose(label_file);
 }
 
-int main(void) { read_mnist(4); }
+int main(int argc, char **argv) {
+    if (argc != 3) {
+        printf("USAGE:\n ./data <MAIN_COUNT> <NUM_SPLITS>\n");
+        return 1;
+    }
+    int main_count = atoi(argv[1]);
+    int n_splits = atoi(argv[2]);
+    read_mnist(main_count, n_splits);
+}
