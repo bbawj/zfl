@@ -1,28 +1,17 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zflclient, LOG_LEVEL_DBG);
 
-#include "train.h"
-
-#include <zephyr/kernel.h>
-#include <zephyr/shell/shell.h>
-
-#include "sb.h"
-
+#include "../../zflserver/src/http.h"
+#include "common.h"
 #include "cson.h"
-
-#include <assert.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <zephyr/device.h>
-#include <zephyr/fs/ext2.h>
-#include <zephyr/fs/fs.h>
-#include <zephyr/net/socket.h>
+#include "train.h"
 
 #define BIND_PORT 8080
 #define PEER_PORT 8080
 
 #define RANDOM_NN 0
+
+Trainer TRAINER = {0};
 
 const unsigned char *train_labels = NULL;
 const unsigned char *train_images = NULL;
@@ -30,14 +19,6 @@ int train_labels_size = 0;
 int train_images_size = 0;
 
 static int ID = 0;
-
-static const char request_id[] = "GET /id ";
-static const char request_images[] = "GET /train-images";
-static const char request_labels[] = "GET /train-labels";
-static const char request_weights[] = "GET /weights ";
-
-static const char content[] = "HTTP/1.0 200 OK\r\nContent-Type: text/plain; "
-                              "charset=utf-8\r\n\nPlain-text example.";
 
 static int sendall(int sock, const char *buf, size_t len) {
     while (len) {
@@ -53,7 +34,7 @@ static int sendall(int sock, const char *buf, size_t len) {
     return 0;
 }
 
-static int recvall(int sock, StringBuilder *sb) {
+static int recvsb(int sock, StringBuilder *sb) {
     char buf[256];
     size_t total = 0;
     ssize_t r = zsock_recv(sock, buf, sizeof(buf), 0);
@@ -67,6 +48,90 @@ static int recvall(int sock, StringBuilder *sb) {
         return r;
     }
     return total;
+}
+
+int init_model(char *data, size_t len) {
+#if RANDOM_NN
+    init_nn(NULL, NULL);
+#else
+    float **initial_weights = malloc(sizeof(float *) * (ARCH_COUNT - 1));
+    assert(initial_weights);
+    float **initial_bias = malloc(sizeof(float *) * (ARCH_COUNT - 1));
+    assert(initial_bias);
+    parse_weights_json(data, len, initial_weights, initial_bias, false);
+    init_nn(&TRAINER.model, initial_weights, initial_bias);
+    for (int i = 0; i < ARCH_COUNT - 1; ++i) {
+        free(initial_weights[i]);
+        free(initial_bias[i]);
+    }
+    free(initial_weights);
+    free(initial_bias);
+#endif /* if RANDOM_NN */
+
+    TRAINER.model_ready = true;
+    LOG_INF("NN init!\n");
+
+    return 0;
+}
+
+void handle_incoming_connection(void *sock, void *x, void *y) {
+    int client = *((int *)sock);
+    char buf[256];
+    int len = zsock_recv(client, buf, sizeof(buf), 0);
+    if (len <= 0) {
+        goto clean;
+    }
+    LOG_INF("received %d bytes\n", len);
+    Http h = {0};
+    int ret = parse_header(&h, buf, len);
+    if (ret <= 0) {
+        LOG_ERR("invalid HTTP header");
+        goto clean;
+    }
+    parse_query_param(&h);
+    if (strncmp(h.url, TRAIN_ENDPOINT, strlen(TRAIN_ENDPOINT)) == 0) {
+        char *content_len_str = get_header(&h, CONTENT_LENGTH);
+        if (content_len_str == NULL) {
+            LOG_ERR("no training data received\n");
+            goto clean;
+        }
+        char *endptr;
+        size_t content_len = strtol(content_len_str, &endptr, 10);
+        char *content = recv_size(client, content_len);
+        if (content == NULL) {
+            goto clean;
+        }
+        init_model(content, content_len);
+        if (TRAINER.samples_ready && TRAINER.model_ready) {
+            LOG_INF("Starting training");
+            train(&TRAINER);
+        } else {
+            LOG_ERR("Unable to start training on client id %d. Trainer "
+                    "state sample: %d, model: %d",
+                    ID, TRAINER.samples_ready, TRAINER.model_ready);
+        }
+    } else if (strncmp(payload, ready_endpoint, strlen(ready_endpoint)) == 0) {
+        char *ready =
+            TRAINER.samples_ready && TRAINER.model_ready ? "true" : "false";
+        sendall(client, ready, strlen(ready));
+    }
+clean:
+    sb_free(&sb);
+    ret = zsock_close(client);
+}
+
+#define THREAD_STACK_SIZE 1024
+#define THREAD_PRIORITY 5
+struct k_thread thread_data;
+
+K_THREAD_STACK_DEFINE(server_stack_area, THREAD_STACK_SIZE);
+k_tid_t handle_incoming_connection_async(int *sock) {
+    LOG_INF("Attempting to create server thread\n");
+    k_tid_t tid = k_thread_create(&thread_data, server_stack_area,
+                                  K_THREAD_STACK_SIZEOF(server_stack_area),
+                                  handle_incoming_connection, sock, NULL, NULL,
+                                  THREAD_PRIORITY, 0, K_NO_WAIT);
+    return tid;
 }
 
 void start_server() {
@@ -111,38 +176,10 @@ void start_server() {
         zsock_inet_ntop(client_addr.sin_family, &client_addr.sin_addr, addr_str,
                         sizeof(addr_str));
         LOG_INF("Connection #%d from %s\n", counter++, addr_str);
-
-        StringBuilder sb = {0};
-        sb_init(&sb, 1024);
-        int ret = recvall(client, &sb);
-        if (ret >= 0) {
-            char *payload = sb_string(&sb);
-            LOG_INF("SERVER: %d byte payload received %s\n", ret, payload);
-            // TODO: parse HTTP request
-        }
-        ret = zsock_close(client);
-        if (ret == 0) {
-            LOG_INF("Connection from %s closed\n", addr_str);
-        } else {
-            LOG_ERR("Got error %s while closing the "
-                    "socket\n",
-                    strerror(errno));
-        }
+        int *sock = malloc(sizeof(int));
+        *sock = client;
+        handle_incoming_connection_async(sock);
     }
-}
-
-#define THREAD_STACK_SIZE 1024
-#define THREAD_PRIORITY 5
-struct k_thread thread_data;
-
-K_THREAD_STACK_DEFINE(server_stack_area, THREAD_STACK_SIZE);
-k_tid_t start_async_server() {
-    LOG_INF("Attempting to create server thread\n");
-    k_tid_t tid =
-        k_thread_create(&thread_data, server_stack_area,
-                        K_THREAD_STACK_SIZEOF(server_stack_area), start_server,
-                        NULL, NULL, NULL, THREAD_PRIORITY, 0, K_NO_WAIT);
-    return tid;
 }
 
 int connect_main_server() {
@@ -168,7 +205,9 @@ int connect_main_server() {
     return serv;
 }
 
-char *get_request(const char *req, int *received) {
+char *get_request(const char *endpoint, int *received) {
+    char req[256];
+    snprintf(req, sizeof(req), "%s %s \r\n\r\n", GET, endpoint);
     LOG_INF("Making get request to %s", req);
     int serv = connect_main_server();
     if (serv < 0) {
@@ -183,7 +222,7 @@ char *get_request(const char *req, int *received) {
     }
     StringBuilder sb = {0};
     sb_init(&sb, 1024);
-    *received = recvall(serv, &sb);
+    *received = recvsb(serv, &sb);
     char *content = sb_string(&sb);
     free(sb.data);
     LOG_INF("Received %d bytes\n", *received);
@@ -193,96 +232,27 @@ char *get_request(const char *req, int *received) {
 
 int req_id() {
     int received = 0;
-    char *id_string = get_request(request_id, &received);
+    char *id_string = get_request(ID_ENDPOINT, &received);
+    if (id_string == NULL) {
+        return -1;
+    }
     ID = atoi(id_string);
     LOG_INF("Client ID is %d", ID);
     return ID;
 }
 
-void req_images() {
-    int received = 0;
+char *req_images(int *n) {
     static char image_resource[100];
-    snprintf(image_resource, sizeof(image_resource), "%s-%d ", request_images,
-             ID);
-    train_images = get_request(image_resource, &received);
-    train_images_size = received;
+    snprintf(image_resource, sizeof(image_resource), "%s?id=%d \r\n",
+             request_images, ID);
+    return get_request(image_resource, n);
 }
 
-void req_labels() {
-    int received = 0;
+char *req_labels(int *n) {
     static char label_resource[100];
-    snprintf(label_resource, sizeof(label_resource), "%s-%d ", request_labels,
-             ID);
-    train_labels = get_request(label_resource, &received);
-    train_labels_size = received;
-}
-
-int req_weights() {
-    LOG_INF("Starting training");
-#if RANDOM_NN
-    train(NULL, NULL);
-#else
-    int received = 0;
-    char *content = get_request(request_weights, &received);
-
-    LOG_INF("Starting CSON...\n");
-    Cson c = {0};
-    c.b = content;
-    c.size = received;
-    c.cap = received;
-    c.cur = 0;
-
-    Token *json = parse_json(&c);
-    Token *weights = json->child;
-    Token *biases = weights->next;
-
-    float **initial_weights = malloc(sizeof(float *) * (ARCH_COUNT - 1));
-    assert(initial_weights);
-    float **initial_bias = malloc(sizeof(float *) * (ARCH_COUNT - 1));
-    assert(initial_bias);
-    for (int i = 0; i < ARCH_COUNT - 1; ++i) {
-        initial_weights[i] = malloc(sizeof(float) * ARCH[i] * ARCH[i + 1]);
-        initial_bias[i] = malloc(sizeof(float) * ARCH[i + 1]);
-    }
-
-    for (int i = 0; i < ARCH_COUNT - 1; ++i) {
-        Token *row = weights->child;
-        for (int j = 0; j < ARCH[i]; ++j) {
-            Token *col = row->child;
-            for (int k = 0; k < ARCH[i + 1]; ++k) {
-                initial_weights[i][j * ARCH[i + 1] + k] =
-                    strtof(col->text, NULL);
-                col = col->next;
-            }
-            row = row->next;
-        }
-        weights = weights->next->next;
-        Token *bias = biases->child;
-        for (int j = 0; j < ARCH[i + 1]; ++j) {
-            initial_bias[i][j] = strtof(bias->text, NULL);
-            bias = bias->next;
-        }
-
-        if (biases->next != NULL) {
-            biases = biases->next->next;
-        }
-    }
-
-    // pretty_print(json, 0);
-    train(initial_weights, initial_bias);
-    for (int i = 0; i < ARCH_COUNT - 1; ++i) {
-        free(initial_weights[i]);
-        free(initial_bias[i]);
-    }
-    free(initial_weights);
-    free(initial_bias);
-
-    free_tokens(json);
-    free(content);
-#endif /* if RANDOM_NN */
-    LOG_INF("Training completed!\n");
-
-    return 0;
+    snprintf(label_resource, sizeof(label_resource), "%s?id=%d \r\n",
+             request_labels, ID);
+    return get_request(label_resource, n);
 }
 
 int send_weights() {
@@ -291,26 +261,27 @@ int send_weights() {
         zsock_close(serv);
         return serv;
     }
-    int ret = sendall(serv, content, sizeof(content));
+    StringBuilder sb;
+    sb_init(&sb, 1024);
+    sb_appendf(&sb, "%s%d \r\n", results_endpoint, ID);
+    char *weights = weights_to_string(&sb, &TRAINER);
+    int ret = sendall(serv, weights, sb.size);
     if (ret < 0) {
         LOG_ERR("could not send to socket: %s\n", strerror(errno));
-        return ret;
     }
     zsock_close(serv);
-    return 0;
+    sb_free(&sb);
+    free(weights);
+    return ret;
 }
 
 int run(const struct shell *sh, size_t argc, char **argv) {
-    // k_tid_t tid = start_async_server();
-    // if (tid == NULL) {
-    //     LOG_ERR("Failed to create thread\n");
-    //     return -1;
-    // }
     if (argc < 2) {
         LOG_ERR("ipv4 address not given");
         return -1;
     }
     char *addr_str = argv[1];
+    LOG_INF("instance ipaddr is %s", addr_str);
     struct in_addr addr;
     zsock_inet_pton(AF_INET, addr_str, &addr);
     if (!net_if_ipv4_addr_add(net_if_get_default(), &addr, NET_ADDR_MANUAL,
@@ -319,17 +290,33 @@ int run(const struct shell *sh, size_t argc, char **argv) {
         return -1;
     }
 
+    TRAINER.model_ready = false;
+    TRAINER.samples_ready = false;
+    TRAINER.samples = (Mat){0};
+    TRAINER.model = (NN){0};
+
+    int image_bytes, n_labels;
     req_id();
-    req_images();
-    req_labels();
-    if (train_images == NULL || train_labels == NULL) {
-        LOG_ERR("train_labels or train_labels is NULL");
+    char *img_data = req_images(&image_bytes);
+    char *label_data = req_labels(&n_labels);
+    int n_images = image_bytes / IMG_SIZE;
+    if (n_images != n_labels) {
+        LOG_ERR("n_images is %d but n_labels is %d, mismatch!", n_images,
+                n_labels);
         return -1;
     }
-    req_weights();
-    // k_thread_join(tid, K_FOREVER);
-    // printf("Model loaded!\n");
-    // train();
+
+    LOG_INF("n_images is %d, n_labels is %d", n_images, n_labels);
+    Mat m;
+    init_train_set(&m, img_data, label_data, n_images);
+    LOG_INF("train set init!");
+    TRAINER.n_images = image_bytes;
+    TRAINER.samples_ready = true;
+    free(img_data);
+    free(label_data);
+
+    start_server();
+
     return 0;
 }
 

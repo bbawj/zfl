@@ -21,9 +21,8 @@
 #define NN_RELU_PARAM 0.01f
 #endif // NN_RELU_PARAM
 
-#include "zephyr/kernel.h"
 #include <stdlib.h>
-#define NN_MALLOC k_malloc
+#define NN_MALLOC malloc
 
 #ifndef NN_ASSERT
 #include <assert.h>

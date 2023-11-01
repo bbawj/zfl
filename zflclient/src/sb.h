@@ -17,6 +17,14 @@ typedef struct {
     char *data;
 } StringBuilder;
 
+void sb_init(StringBuilder *sb, size_t size);
+int sb_append(StringBuilder *sb, const char *data, size_t len);
+int sb_appendf(StringBuilder *sb, const char *format, ...);
+char *sb_string(StringBuilder *sb);
+void sb_free(StringBuilder *sb);
+
+#ifdef SB_IMPLEMENTATION
+
 void sb_init(StringBuilder *sb, size_t size) {
     sb->size = 0;
     sb->cap = size;
@@ -24,7 +32,7 @@ void sb_init(StringBuilder *sb, size_t size) {
     assert(sb->data);
 }
 
-int sb_append(StringBuilder *sb, char *data, size_t len) {
+int sb_append(StringBuilder *sb, const char *data, size_t len) {
     if (sb->size + len > sb->cap) {
         sb->data = realloc(sb->data, sb->cap * 2);
         sb->cap *= 2;
@@ -67,4 +75,7 @@ void sb_free(StringBuilder *sb) {
     sb->size = 0;
     sb->cap = 0;
 }
+
+#endif // SB_IMPLEMENTATION
+
 #endif // ! SB_H

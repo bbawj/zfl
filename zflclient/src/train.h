@@ -1,36 +1,36 @@
-// static const unsigned char train_images[] = {
-// #include <train-images.bin.inc>
-// };
-//
-// static const unsigned char train_labels[] = {
-// #include <train-labels.bin.inc>
-// };
-
 #ifndef TRAIN_H_
 #define TRAIN_H_
 
+#include "common.h"
+#include "sb.h"
+
+#include <assert.h>
+#include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <zephyr/device.h>
+#include <zephyr/fs/ext2.h>
+#include <zephyr/fs/fs.h>
+#include <zephyr/kernel.h>
+#include <zephyr/net/socket.h>
+#include <zephyr/shell/shell.h>
 
-#define IMG_HEIGHT 28
-#define IMG_WIDTH 28
-#define IMG_SIZE (IMG_HEIGHT * IMG_WIDTH)
 #define NUM_EPOCHS 10
-#define HIDDEN_LAYER 16
-#define OUTPUT 10
-#define ARCH_COUNT 3
-#define ARCH                                                                   \
-    (size_t[]) { IMG_SIZE, HIDDEN_LAYER, OUTPUT }
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-extern const unsigned char *train_images;
-extern const unsigned char *train_labels;
-extern int train_images_size;
-extern int train_labels_size;
+typedef struct {
+    int n_images;
+    Mat samples;
+    NN model;
 
-void train(float **initial_weights, float **initial_bias);
+    bool samples_ready;
+    bool model_ready;
+} Trainer;
+
+void train(Trainer *trainer);
+char *weights_to_string(StringBuilder *sb, Trainer *t);
 
 #ifdef __cplusplus
 }

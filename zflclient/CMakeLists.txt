@@ -4,7 +4,7 @@ cmake_minimum_required(VERSION 3.20.0)
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(zflclient)
 
-FILE(GLOB app_sources src/*)
+FILE(GLOB app_sources src/*.c)
 target_sources(app PRIVATE ${app_sources})
 
 set(my_dir /home/bawj/projects/fyp/zephyrproject/zephyr/zfl/zflserver)

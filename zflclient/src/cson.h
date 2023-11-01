@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/types.h>
 
 #ifndef CSON_ALLOC
 #define CSON_ALLOC malloc
@@ -51,6 +52,13 @@ typedef struct Token {
     struct Token *next;
 } Token;
 
+Token *parse_json(Cson *c);
+Token *parse_json_file(Cson *c, const char *path);
+void free_tokens(Token *t);
+void pretty_print(Token *root, int depth);
+
+#ifdef CSON_IMPLEMENTATION
+
 void log_error(Cson *c, char *message) {
     char buf[256];
     snprintf(buf, sizeof(buf), "ERROR: invalid token '%c'. %s", c->b[c->cur],
@@ -84,7 +92,7 @@ void open_file(Cson *c, const char *filename) {
     }
     char *line = NULL;
     size_t len = 0;
-    size_t nread;
+    ssize_t nread;
     while ((nread = getline(&line, &len, fp)) != -1) {
         append_line(c, line, nread);
     }
@@ -443,5 +451,7 @@ void free_tokens(Token *t) {
         t = temp;
     }
 }
+
+#endif // CSON_IMPLEMENTATION
 
 #endif // ! CSON_H
