@@ -21,8 +21,13 @@
 #define NN_RELU_PARAM 0.01f
 #endif // NN_RELU_PARAM
 
+#ifdef SERVER
 #include <stdlib.h>
 #define NN_MALLOC malloc
+#else
+#include <zephyr/kernel.h>
+#define NN_MALLOC k_malloc
+#endif
 
 #ifndef NN_ASSERT
 #include <assert.h>
@@ -565,6 +570,8 @@ void *region_alloc(Region *r, size_t size_bytes) {
     size_t word_size = sizeof(*r->words);
     size_t size_words = (size_bytes + word_size - 1) / word_size;
 
+    // printf("Current size: %zu, capacity: %zu, needed: %zu\n", r->size,
+    //        r->capacity, size_words);
     NN_ASSERT(r->size + size_words <= r->capacity);
     if (r->size + size_words > r->capacity)
         return NULL;

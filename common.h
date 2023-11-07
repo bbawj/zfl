@@ -11,62 +11,79 @@
 #define HIDDEN_LAYER 16
 #define OUTPUT 10
 #define ARCH_COUNT 3
-#define ARCH                                                                   \
-    (size_t[]) { IMG_SIZE, HIDDEN_LAYER, OUTPUT }
 
-void init_train_set(Mat *t, char *img_data, char *label_data, int n_images);
+Mat init_train_set(char *img_data, char *label_data, int n_images);
 int parse_weights_json(char *bytes, size_t len, float **initial_weights,
                        float **initial_bias, bool accum);
 int insert_weights_to_nn(NN nn, float **initial_weights, float **initial_bias);
 void init_nn(NN *nn, float **initial_weights, float **initial_bias);
 float accuracy(NN nn, Mat t);
-char *recv_size(int sock, size_t size);
+size_t weights_to_string(StringBuilder *sb, NN *nn);
 
 #ifdef COMMON_IMPLEMENTATION
 
-char *recv_size(int sock, size_t size) {
-    if (size == 0) {
-        return NULL;
-    }
-    char *ret = NULL;
-    StringBuilder sb = {0};
-    sb_init(&sb, size);
-    char buf[256];
-    size_t total = 0;
-    while (total < size) {
-        ssize_t r = recv(sock, buf, sizeof(buf), 0);
-        if (r <= 0) {
-            goto clean;
+size_t ARCH[] = {IMG_SIZE, HIDDEN_LAYER, OUTPUT};
+
+size_t weights_to_string(StringBuilder *sb, NN *nn) {
+    sb_append(sb, "[", 1);
+    for (size_t i = 0; i < nn->arch_count - 1; ++i) {
+        Mat w = nn->ws[i];
+        sb_append(sb, "[", 1);
+        for (size_t j = 0; j < w.rows; ++j) {
+            sb_append(sb, "[", 1);
+            for (size_t k = 0; k < w.cols; ++k) {
+                if (k == w.cols - 1) {
+                    sb_appendf(sb, "%f", MAT_AT(w, j, k));
+                } else {
+                    sb_appendf(sb, "%f,", MAT_AT(w, j, k));
+                }
+            }
+            if (j == w.rows - 1) {
+                sb_append(sb, "]", 1);
+            } else {
+                sb_append(sb, "],", 2);
+            }
         }
-        total += r;
-        sb_append(&sb, buf, r);
+        sb_append(sb, "],", 2);
+        sb_append(sb, "[", 1);
+        Row b = nn->bs[i];
+        for (size_t j = 0; j < b.cols; ++j) {
+            if (j == b.cols - 1) {
+                sb_appendf(sb, "%f", w.elements[j]);
+            } else {
+                sb_appendf(sb, "%f,", w.elements[j]);
+            }
+        }
+        if (i == nn->arch_count - 2) {
+            sb_append(sb, "]", 1);
+        } else {
+            sb_append(sb, "],", 2);
+        }
     }
-    ret = sb_string(&sb);
-clean:
-    sb_free(&sb);
-    return ret;
+    sb_append(sb, "]", 1);
+    return sb->size;
 }
 
-void init_train_set(Mat *t, char *img_data, char *label_data, int n_images) {
-    *t = mat_alloc(NULL, n_images, IMG_SIZE + 10);
-    printf("alloced!\n");
+Mat init_train_set(char *img_data, char *label_data, int n_images) {
+    Mat t = mat_alloc(NULL, n_images, IMG_SIZE + 10);
 
     for (int image = 0; image < n_images; ++image) {
         for (int row = 0; row < IMG_HEIGHT; ++row) {
             for (int col = 0; col < IMG_WIDTH; ++col) {
                 float pixel =
                     img_data[image * IMG_SIZE + row * IMG_WIDTH + col] / 255.0f;
-                MAT_AT(*t, image, row * IMG_WIDTH + col) = pixel;
+                MAT_AT(t, image, row * IMG_WIDTH + col) = pixel;
             }
         }
         for (int i = 0; i < OUTPUT; ++i) {
             if (i == label_data[image]) {
-                MAT_AT(*t, image, IMG_SIZE + label_data[image]) = 1.0f;
+                MAT_AT(t, image, IMG_SIZE + label_data[image]) = 1.0f;
             } else {
-                MAT_AT(*t, image, IMG_SIZE + i) = 0.0f;
+                MAT_AT(t, image, IMG_SIZE + i) = 0.0f;
             }
         }
     }
+    return t;
 }
 
 int parse_weights_json(char *bytes, size_t len, float **initial_weights,
@@ -85,7 +102,9 @@ int parse_weights_json(char *bytes, size_t len, float **initial_weights,
         for (int i = 0; i < ARCH_COUNT - 1; ++i) {
             initial_weights[i] =
                 calloc(1, sizeof(float) * ARCH[i] * ARCH[i + 1]);
+            assert(initial_weights[i] != NULL);
             initial_bias[i] = calloc(1, sizeof(float) * ARCH[i + 1]);
+            assert(initial_bias[i] != NULL);
         }
     }
 
@@ -112,7 +131,6 @@ int parse_weights_json(char *bytes, size_t len, float **initial_weights,
         }
     }
     free_tokens(json);
-    free(bytes);
     return 0;
 }
 

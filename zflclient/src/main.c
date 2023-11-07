@@ -1,27 +1,33 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zflclient, LOG_LEVEL_DBG);
 
-#include "../../zflserver/src/http.h"
-#include "common.h"
-#include "cson.h"
+#include <zephyr/kernel.h>
+#include <zephyr/net/socket.h>
+#include <zephyr/shell/shell.h>
+
+#include "../../common.h"
+#include "../../http.h"
 #include "train.h"
+#include <assert.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #define BIND_PORT 8080
 #define PEER_PORT 8080
+#define CONFIG_NET_CONFIG_PEER_IPV4_ADDR "192.0.2.2"
 
 #define RANDOM_NN 0
 
 Trainer TRAINER = {0};
 
-const unsigned char *train_labels = NULL;
-const unsigned char *train_images = NULL;
 int train_labels_size = 0;
 int train_images_size = 0;
 
 static int ID = 0;
 
 static int sendall(int sock, const char *buf, size_t len) {
-    while (len) {
+    while (len > 0) {
         ssize_t out_len = zsock_send(sock, buf, len, 0);
 
         if (out_len < 0) {
@@ -34,7 +40,7 @@ static int sendall(int sock, const char *buf, size_t len) {
     return 0;
 }
 
-static int recvsb(int sock, StringBuilder *sb) {
+int recvall(int sock, StringBuilder *sb) {
     char buf[256];
     size_t total = 0;
     ssize_t r = zsock_recv(sock, buf, sizeof(buf), 0);
@@ -51,6 +57,7 @@ static int recvsb(int sock, StringBuilder *sb) {
 }
 
 int init_model(char *data, size_t len) {
+    LOG_INF("Initializing Model, random: %d", RANDOM_NN);
 #if RANDOM_NN
     init_nn(NULL, NULL);
 #else
@@ -58,7 +65,9 @@ int init_model(char *data, size_t len) {
     assert(initial_weights);
     float **initial_bias = malloc(sizeof(float *) * (ARCH_COUNT - 1));
     assert(initial_bias);
+    LOG_INF("Parsing json");
     parse_weights_json(data, len, initial_weights, initial_bias, false);
+    LOG_INF("Initing nn");
     init_nn(&TRAINER.model, initial_weights, initial_bias);
     for (int i = 0; i < ARCH_COUNT - 1; ++i) {
         free(initial_weights[i]);
@@ -68,27 +77,83 @@ int init_model(char *data, size_t len) {
     free(initial_bias);
 #endif /* if RANDOM_NN */
 
-    TRAINER.model_ready = true;
     LOG_INF("NN init!\n");
 
+    free(data);
     return 0;
+}
+
+int connect_main_server() {
+    int serv;
+    int ret;
+    struct sockaddr_in addr4;
+    addr4.sin_family = AF_INET;
+    addr4.sin_port = htons(PEER_PORT);
+    LOG_INF("Attempting to connect to %s %d\n",
+            CONFIG_NET_CONFIG_PEER_IPV4_ADDR, PEER_PORT);
+    zsock_inet_pton(AF_INET, CONFIG_NET_CONFIG_PEER_IPV4_ADDR, &addr4.sin_addr);
+    serv = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (serv == -1) {
+        LOG_ERR("could not create server socket because %s\n", strerror(errno));
+        return -1;
+    }
+    ret = zsock_connect(serv, (struct sockaddr *)&addr4, sizeof(addr4));
+    if (ret < 0) {
+        LOG_ERR("could not connect to server socket: %s\n", strerror(errno));
+        return ret;
+    }
+    LOG_INF("Successfully connected to server\n");
+    return serv;
+}
+
+int send_weights() {
+    StringBuilder sb;
+    sb_init(&sb, 1024);
+    size_t weights_len = weights_to_string(&sb, &TRAINER.model);
+    char req[256];
+    int req_len = snprintf(req, sizeof(req),
+                           "POST %s?id=%d \r\nContent-Length: %zu\r\n\r\n",
+                           RESULTS_ENDPOINT, ID, weights_len);
+
+    int serv = connect_main_server();
+    if (serv < 0) {
+        goto clean;
+    }
+    int ret = sendall(serv, req, req_len);
+    if (ret < 0) {
+        LOG_ERR("could not send to socket: %s", strerror(errno));
+        goto clean;
+    }
+    ret = sendall(serv, sb.data, weights_len);
+    if (ret < 0) {
+        LOG_ERR("could not send to socket: %s", strerror(errno));
+    }
+clean:
+    zsock_close(serv);
+    sb_free(&sb);
+    return ret;
 }
 
 void handle_incoming_connection(void *sock, void *x, void *y) {
     int client = *((int *)sock);
-    char buf[256];
-    int len = zsock_recv(client, buf, sizeof(buf), 0);
-    if (len <= 0) {
-        goto clean;
-    }
-    LOG_INF("received %d bytes\n", len);
     Http h = {0};
-    int ret = parse_header(&h, buf, len);
-    if (ret <= 0) {
-        LOG_ERR("invalid HTTP header");
+    StringBuilder sb = {0};
+    sb_init(&sb, 1024);
+
+    int required_len = recv_required_req(&h, &sb, client);
+    if (required_len < 0) {
+        LOG_ERR("invalid HTTP required header: %.*s", sb.size, sb.data);
         goto clean;
     }
+    int optional_len = recv_optional_headers(&h, &sb, client, required_len);
+    if (optional_len < 0) {
+        LOG_ERR("invalid HTTP optional headers: %.*s", sb.size, sb.data);
+        goto clean;
+    }
+
     parse_query_param(&h);
+    LOG_INF("HTTP request\nMethod: %s, url: %s\n", h.method, h.url);
+
     if (strncmp(h.url, TRAIN_ENDPOINT, strlen(TRAIN_ENDPOINT)) == 0) {
         char *content_len_str = get_header(&h, CONTENT_LENGTH);
         if (content_len_str == NULL) {
@@ -97,27 +162,32 @@ void handle_incoming_connection(void *sock, void *x, void *y) {
         }
         char *endptr;
         size_t content_len = strtol(content_len_str, &endptr, 10);
-        char *content = recv_size(client, content_len);
-        if (content == NULL) {
+        size_t offset = required_len + optional_len;
+        int ret = recv_content(&sb, client, offset, content_len);
+        if (ret == -1) {
+            LOG_ERR("Could not recv all %zu bytes of content, required: %d, "
+                    "optional: %d, current: %zu",
+                    content_len, required_len, optional_len, sb.size);
             goto clean;
         }
+        char *content = substr(sb.data, offset, content_len);
         init_model(content, content_len);
-        if (TRAINER.samples_ready && TRAINER.model_ready) {
-            LOG_INF("Starting training");
-            train(&TRAINER);
-        } else {
-            LOG_ERR("Unable to start training on client id %d. Trainer "
-                    "state sample: %d, model: %d",
-                    ID, TRAINER.samples_ready, TRAINER.model_ready);
-        }
-    } else if (strncmp(payload, ready_endpoint, strlen(ready_endpoint)) == 0) {
-        char *ready =
-            TRAINER.samples_ready && TRAINER.model_ready ? "true" : "false";
+        LOG_INF("Starting training");
+        train(&TRAINER);
+
+        send_weights();
+
+        free(content);
+    } else if (strncmp(h.url, READY_ENDPOINT, strlen(READY_ENDPOINT)) == 0) {
+        char *ready = TRAINER.samples_ready ? "true" : "false";
         sendall(client, ready, strlen(ready));
+    } else {
+        LOG_ERR("404 resource not found: %s\n", h.url);
     }
 clean:
+    zsock_close(client);
     sb_free(&sb);
-    ret = zsock_close(client);
+    free(sock);
 }
 
 #define THREAD_STACK_SIZE 1024
@@ -182,32 +252,9 @@ void start_server() {
     }
 }
 
-int connect_main_server() {
-    int serv;
-    int ret;
-    struct sockaddr_in addr4;
-    addr4.sin_family = AF_INET;
-    addr4.sin_port = htons(PEER_PORT);
-    LOG_INF("Attempting to connect to %s %d\n",
-            CONFIG_NET_CONFIG_PEER_IPV4_ADDR, PEER_PORT);
-    zsock_inet_pton(AF_INET, CONFIG_NET_CONFIG_PEER_IPV4_ADDR, &addr4.sin_addr);
-    serv = zsock_socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (serv == -1) {
-        LOG_ERR("could not create server socket because %s\n", strerror(errno));
-        return -1;
-    }
-    ret = zsock_connect(serv, (struct sockaddr *)&addr4, sizeof(addr4));
-    if (ret < 0) {
-        LOG_ERR("could not connect to server socket: %s\n", strerror(errno));
-        return ret;
-    }
-    LOG_INF("Successfully connected to server\n");
-    return serv;
-}
-
 char *get_request(const char *endpoint, int *received) {
     char req[256];
-    snprintf(req, sizeof(req), "%s %s \r\n\r\n", GET, endpoint);
+    int len = snprintf(req, sizeof(req), "%s %s \r\n\r\n", GET, endpoint);
     LOG_INF("Making get request to %s", req);
     int serv = connect_main_server();
     if (serv < 0) {
@@ -215,17 +262,16 @@ char *get_request(const char *endpoint, int *received) {
         return NULL;
     }
 
-    int ret = sendall(serv, req, strlen(req));
+    int ret = sendall(serv, req, len);
     if (ret < 0) {
         LOG_ERR("could not send to socket: %s\n", strerror(errno));
         return NULL;
     }
     StringBuilder sb = {0};
     sb_init(&sb, 1024);
-    *received = recvsb(serv, &sb);
+    *received = recvall(serv, &sb);
     char *content = sb_string(&sb);
-    free(sb.data);
-    LOG_INF("Received %d bytes\n", *received);
+    sb_free(&sb);
     zsock_close(serv);
     return content;
 }
@@ -238,41 +284,21 @@ int req_id() {
     }
     ID = atoi(id_string);
     LOG_INF("Client ID is %d", ID);
-    return ID;
+    return received;
 }
 
 char *req_images(int *n) {
     static char image_resource[100];
-    snprintf(image_resource, sizeof(image_resource), "%s?id=%d \r\n",
-             request_images, ID);
+    snprintf(image_resource, sizeof(image_resource), "%s?id=%d",
+             TRAINING_IMAGES_ENDPOINT, ID);
     return get_request(image_resource, n);
 }
 
 char *req_labels(int *n) {
     static char label_resource[100];
-    snprintf(label_resource, sizeof(label_resource), "%s?id=%d \r\n",
-             request_labels, ID);
+    snprintf(label_resource, sizeof(label_resource), "%s?id=%d",
+             TRAINING_LABELS_ENDPOINT, ID);
     return get_request(label_resource, n);
-}
-
-int send_weights() {
-    int serv = connect_main_server();
-    if (serv < 0) {
-        zsock_close(serv);
-        return serv;
-    }
-    StringBuilder sb;
-    sb_init(&sb, 1024);
-    sb_appendf(&sb, "%s%d \r\n", results_endpoint, ID);
-    char *weights = weights_to_string(&sb, &TRAINER);
-    int ret = sendall(serv, weights, sb.size);
-    if (ret < 0) {
-        LOG_ERR("could not send to socket: %s\n", strerror(errno));
-    }
-    zsock_close(serv);
-    sb_free(&sb);
-    free(weights);
-    return ret;
 }
 
 int run(const struct shell *sh, size_t argc, char **argv) {
@@ -290,7 +316,6 @@ int run(const struct shell *sh, size_t argc, char **argv) {
         return -1;
     }
 
-    TRAINER.model_ready = false;
     TRAINER.samples_ready = false;
     TRAINER.samples = (Mat){0};
     TRAINER.model = (NN){0};
@@ -307,10 +332,9 @@ int run(const struct shell *sh, size_t argc, char **argv) {
     }
 
     LOG_INF("n_images is %d, n_labels is %d", n_images, n_labels);
-    Mat m;
-    init_train_set(&m, img_data, label_data, n_images);
+    TRAINER.samples = init_train_set(img_data, label_data, n_images);
     LOG_INF("train set init!");
-    TRAINER.n_images = image_bytes;
+    TRAINER.n_images = n_images;
     TRAINER.samples_ready = true;
     free(img_data);
     free(label_data);

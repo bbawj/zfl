@@ -1,9 +1,11 @@
-#include "../../sb.h"
+#define SERVER
+#define SB_IMPLEMENTATION
 #define CSON_IMPLEMENTATION
 #define NN_IMPLEMENTATION
 #define COMMON_IMPLEMENTATION
-#include "../../zflclient/src/common.h"
-#include "http.h"
+#include "../../common.h"
+#include "../../http.h"
+#include "../../zflclient/src/train.h"
 #include <arpa/inet.h>
 #include <assert.h>
 #include <errno.h>
@@ -16,10 +18,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
+#include <sys/time.h>
 #include <unistd.h>
 
 #define PORT 8080
 #define PEER_PORT 8080
+#define READ_TIMEOUT 5
 
 pthread_mutex_t accum_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t result_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -59,13 +64,14 @@ typedef struct {
 } Round;
 
 static Clients CLIENTS = {0};
-Round CURRENT_ROUND = {0};
+static Round CURRENT_ROUND = {0};
 
 static int sendall(int sock, const char *buf, size_t len) {
     while (len) {
         ssize_t out_len = send(sock, buf, len, 0);
 
         if (out_len < 0) {
+            printf("ERROR: failed to send because: %s\n", strerror(errno));
             return out_len;
         }
         buf = (const char *)buf + out_len;
@@ -141,9 +147,7 @@ int send_id(int client_socket, char *addr) {
     char id_str[20];
     snprintf(id_str, sizeof(id_str), "%d", id);
     char res[256];
-    int len =
-        snprintf(res, sizeof(res), "200 OK \r\nContent-Length: %zu\r\n\r\n%s",
-                 strlen(id_str), id_str);
+    int len = snprintf(res, sizeof(res), "%s", id_str);
     int sent = send(client_socket, res, len, 0);
     CLIENTS.client = realloc(CLIENTS.client, sizeof(Client) * CLIENTS.n);
     CLIENTS.client[id - 1] = (Client){.id = id, .ipaddr = addr, .ready = false};
@@ -162,12 +166,8 @@ int send_training_images(int client_socket, int id) {
     return send_file(client_socket, images);
 }
 
-int send_weights(int client_socket) {
-    const char *initial_weights_file = "./initial_weights.json";
-    return send_file(client_socket, initial_weights_file);
-}
-
 void *handle_results(int id, char *results, size_t len) {
+    printf("INFO: Client %d responded with results size %zu\n", id, len);
     for (int i = 0; i < CLIENTS.n; ++i) {
         Client *c = &CLIENTS.client[i];
         if (c->id == id) {
@@ -175,9 +175,11 @@ void *handle_results(int id, char *results, size_t len) {
 
             parse_weights_json(results, len, CURRENT_ROUND.weights,
                                CURRENT_ROUND.biases,
-                               CURRENT_ROUND.responded == 0);
+                               CURRENT_ROUND.responded != 0);
 
             ++CURRENT_ROUND.responded;
+
+            pthread_mutex_unlock(&result_mutex);
 
             // TODO: allow certain fraction of clients to dropoff
             if (CURRENT_ROUND.responded == CURRENT_ROUND.participants) {
@@ -195,15 +197,11 @@ void *handle_results(int id, char *results, size_t len) {
                             CURRENT_ROUND.participants;
                     }
                 }
+                init_nn(&CURRENT_ROUND.nn, CURRENT_ROUND.weights,
+                        CURRENT_ROUND.biases);
+                printf("INFO: final model accuracy is %f\n",
+                       accuracy(CURRENT_ROUND.nn, CURRENT_ROUND.test_set));
             }
-
-            init_nn(&CURRENT_ROUND.nn, CURRENT_ROUND.weights,
-                    CURRENT_ROUND.biases);
-
-            pthread_mutex_unlock(&result_mutex);
-            printf("INFO: final model accuracy is %f\n",
-                   accuracy(CURRENT_ROUND.nn, CURRENT_ROUND.test_set));
-
             break;
         }
     }
@@ -220,6 +218,7 @@ int extract_id(Http *h) {
     errno = 0;
     int id = strtol(id_str, &endptr, 10);
     if (errno != 0) {
+        printf("ERROR: id %d could not be converted to int\n", id);
         return -1;
     }
     if (id < 1 || id > CLIENTS.n) {
@@ -232,30 +231,28 @@ int extract_id(Http *h) {
 
 void *handle_incoming_connection(void *con) {
     ConnectionInfo *info = (ConnectionInfo *)con;
-    char buf[256];
-    int len = recv(info->sock, buf, sizeof(buf), 0);
-    if (len <= 0) {
-        goto clean;
-    }
-    printf("INFO: Received %d bytes\n", len);
     Http h = {0};
-    int ret = parse_header(&h, buf, len);
+    StringBuilder sb = {0};
+    sb_init(&sb, 1024);
+
+    int required_len = recv_required_req(&h, &sb, info->sock);
+    if (required_len < 0)
+        goto clean;
+    int optional_len = recv_optional_headers(&h, &sb, info->sock, required_len);
+    if (optional_len < 0)
+        goto clean;
+
     parse_query_param(&h);
     printf("INFO: HTTP request\nMethod: %s, url: %s\n", h.method, h.url);
-    for (int i = 0; i < h.n_query; ++i) {
-        printf("Query %d. Key: %s, Val: %s\n", i, h.query_keys[i],
+    for (size_t i = 0; i < h.n_query; ++i) {
+        printf("Query %zu. Key: %s, Val: %s\n", i, h.query_keys[i],
                h.query_vals[i]);
     }
-    for (int i = 0; i < h.n_headers; ++i) {
-        printf("header %d. Key: %s, Val: %s\n", i, h.header_keys[i],
+    for (size_t i = 0; i < h.n_headers; ++i) {
+        printf("header %zu. Key: %s, Val: %s\n", i, h.header_keys[i],
                h.header_vals[i]);
     }
     // return NULL;
-
-    if (ret == -1) {
-        printf("ERROR: invalid HTTP request\n");
-        return NULL;
-    }
     printf("INFO: %s request for: %s\n", h.method, h.url);
     if (strncmp(h.method, GET, strlen(GET)) == 0) {
         if (strncmp(h.url, ID_ENDPOINT, strlen(ID_ENDPOINT)) == 0) {
@@ -278,8 +275,7 @@ void *handle_incoming_connection(void *con) {
             printf("INFO: 404 not found: %s\n", h.url);
         }
     } else if (strncmp(h.method, POST, strlen(POST)) == 0) {
-        // TODO: FedAvg
-        if (strncmp(h.url, RESULTS_ENDPOINT, strlen(RESULTS_ENDPOINT))) {
+        if (strncmp(h.url, RESULTS_ENDPOINT, strlen(RESULTS_ENDPOINT)) == 0) {
             int id = extract_id(&h);
             if (id == -1) {
                 goto clean;
@@ -292,7 +288,12 @@ void *handle_incoming_connection(void *con) {
             }
             char *endptr;
             size_t content_len = strtol(content_len_str, &endptr, 10);
-            char *content = recv_size(info->sock, content_len);
+
+            size_t offset = required_len + optional_len;
+            int ret = recv_content(&sb, info->sock, offset, content_len);
+            if (ret == -1)
+                goto clean;
+            char *content = substr(sb.data, offset, content_len);
             if (content != NULL) {
                 // TODO: create new thread
                 handle_results(id, content, content_len);
@@ -333,6 +334,7 @@ void *start_round() {
                 c->ready = false;
                 goto clean;
             }
+            printf("INFO: Client %s ready: %s\n", c->ipaddr, buf);
             if (strncmp(buf, "true", strlen("true")) == 0) {
                 c->ready = true;
                 ++ready;
@@ -345,16 +347,26 @@ void *start_round() {
 
         if (ready == 1) {
             ++CURRENT_ROUND.round_number;
+            printf("INFO: %zu clients are ready, starting round %zu\n", ready,
+                   CURRENT_ROUND.round_number);
             for (int i = 0; i < CLIENTS.n; ++i) {
                 Client c = CLIENTS.client[i];
                 if (c.ready) {
                     ++CURRENT_ROUND.participants;
                     int sock = connect_client(c.ipaddr);
                     char req[256];
-                    snprintf(req, sizeof(req), "%s %s \r\n\r\n", POST,
-                             TRAIN_ENDPOINT);
-                    sendall(sock, req, strlen(req));
-                    send_weights(sock);
+                    StringBuilder sb;
+                    sb_init(&sb, 1024);
+                    size_t weights_len =
+                        weights_to_string(&sb, &CURRENT_ROUND.nn);
+                    int len =
+                        snprintf(req, sizeof(req),
+                                 "POST /train \r\nContent-Length: %zu\r\n\r\n",
+                                 weights_len);
+                    printf("INFO: sending req %s\n", req);
+                    sendall(sock, req, len);
+                    sendall(sock, sb.data, weights_len);
+                    sb_free(&sb);
                     close(sock);
                 }
             }
@@ -399,13 +411,30 @@ int main(void) {
     assert(images.size / IMG_SIZE == labels.size);
 
     printf("INFO: init test set!\n");
-    init_train_set(&CURRENT_ROUND.test_set, images.data, labels.data, 10000);
+    CURRENT_ROUND.test_set = init_train_set(images.data, labels.data, 10000);
     printf("INFO: test set loaded!\n");
 
     CURRENT_ROUND.weights = malloc(sizeof(float *) * (ARCH_COUNT - 1));
     assert(CURRENT_ROUND.weights);
     CURRENT_ROUND.biases = malloc(sizeof(float *) * (ARCH_COUNT - 1));
     assert(CURRENT_ROUND.biases);
+
+    // StringBuilder initial_model;
+    // sb_init(&initial_model, 1024);
+    // FILE *init = fopen("./initial_weights.json", "r");
+    // assert(init);
+    // while (!feof(init)) {
+    //     int ret = fread(buf, sizeof(*buf), sizeof(buf), init);
+    //     sb_append(&initial_model, buf, ret);
+    //     if (ferror(init) != 0) {
+    //         printf("Error reading file %s\n", strerror(errno));
+    //     }
+    // }
+    //
+    // parse_weights_json(initial_model.data, initial_model.size,
+    //                    CURRENT_ROUND.weights, CURRENT_ROUND.biases, false);
+    // init_nn(&CURRENT_ROUND.nn, CURRENT_ROUND.weights, CURRENT_ROUND.biases);
+    init_nn(&CURRENT_ROUND.nn, NULL, NULL);
 
     int sock;
     struct sockaddr_in name;
@@ -461,14 +490,17 @@ int main(void) {
         if (client_socket == -1) {
             printf("ERROR: accept because %s\n", strerror(errno));
         }
-        char *addr_str = malloc(INET_ADDRSTRLEN);
-        inet_ntop(client_addr.sin_family, &client_addr.sin_addr, addr_str,
-                  sizeof(addr_str));
-        printf("Client connected from %s\n", addr_str);
+
+        struct timeval tv;
+        tv.tv_sec = READ_TIMEOUT;
+        tv.tv_usec = 0;
+        setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv,
+                   sizeof(tv));
 
         ConnectionInfo *con = malloc(sizeof(ConnectionInfo));
         con->sock = client_socket;
-        con->addr = addr_str;
+        con->addr = inet_ntoa(client_addr.sin_addr);
+        printf("INFO: Client connected from %s\n", con->addr);
         pthread_t th;
         pthread_create(&th, NULL, handle_incoming_connection, con);
     }
