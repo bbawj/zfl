@@ -93,6 +93,7 @@ void *cat_client_output(void *pipe_path) {
                    log_path, strerror(errno));
             goto clean;
         }
+        fflush(log);
         n_read = read(fd, buf, sizeof(buf));
     }
 clean:
@@ -188,7 +189,7 @@ int start_client(int num_clients) {
                        // "-chardev", serial_arg,
                        // "-chardev", "stdio,id=con",
 
-                       // "-serial", serial_arg,
+                       "-serial", serial_arg,
 
                        // "-mon", "chardev=con,mode=readline",
 
@@ -232,21 +233,20 @@ int start_client(int num_clients) {
         pthread_create(&th, NULL, cat_client_output, strdup(pipe_out));
     }
 
-    int status;
     for (int i = 0; i < num_clients; i++) {
-        printf("waiting for client %d pid: %d to return\n", i, process_ids[i]);
-        waitpid(process_ids[i], &status, WEXITED);
-        printf("client %d exited\n", process_ids[i]);
-        snprintf(pipe_path, sizeof(pipe_path), "/tmp/client%d", i + 1);
+        int pid = wait(NULL);
+        printf("client %d exited\n", pid);
+        for (int j = 0; j < num_clients; ++j) {
+            if (process_ids[j] == pid) {
+                snprintf(pipe_path, sizeof(pipe_path), "/tmp/client%d", j + 1);
 
-        char pipe_in[100], pipe_out[100];
-        snprintf(pipe_in, sizeof(pipe_in), "%s.in", pipe_path);
-        snprintf(pipe_out, sizeof(pipe_out), "%s.out", pipe_path);
-        remove(pipe_in);
-        remove(pipe_out);
-
-        if (WEXITSTATUS(status) == EXIT_FAILURE)
-            return EXIT_FAILURE;
+                char pipe_in[100], pipe_out[100];
+                snprintf(pipe_in, sizeof(pipe_in), "%s.in", pipe_path);
+                snprintf(pipe_out, sizeof(pipe_out), "%s.out", pipe_path);
+                remove(pipe_in);
+                remove(pipe_out);
+            }
+        }
     }
     return 0;
 }

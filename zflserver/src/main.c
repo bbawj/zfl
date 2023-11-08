@@ -25,8 +25,9 @@
 #define PORT 8080
 #define PEER_PORT 8080
 #define READ_TIMEOUT 5
+#define CLIENTS_PER_ROUND 2
 
-pthread_mutex_t accum_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t result_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t shutdown_mutex = PTHREAD_MUTEX_INITIALIZER;
 bool should_shutdown = false;
@@ -140,17 +141,20 @@ int send_file(int client_socket, const char *file_path) {
 }
 
 int send_id(int client_socket, char *addr) {
-    pthread_mutex_lock(&accum_mutex);
+    pthread_mutex_lock(&client_mutex);
     int id = ++CLIENTS.n;
-    pthread_mutex_unlock(&accum_mutex);
-    printf("Current ID is %d\n", id);
+    printf("ID of client %s is %d\n", addr, id);
     char id_str[20];
     snprintf(id_str, sizeof(id_str), "%d", id);
     char res[256];
     int len = snprintf(res, sizeof(res), "%s", id_str);
-    int sent = send(client_socket, res, len, 0);
     CLIENTS.client = realloc(CLIENTS.client, sizeof(Client) * CLIENTS.n);
-    CLIENTS.client[id - 1] = (Client){.id = id, .ipaddr = addr, .ready = false};
+    CLIENTS.client[id - 1].id = id;
+    CLIENTS.client[id - 1].ipaddr = strdup(addr);
+    CLIENTS.client[id - 1].ready = false;
+    pthread_mutex_unlock(&client_mutex);
+
+    int sent = send(client_socket, res, len, 0);
     return sent;
 }
 
@@ -178,11 +182,13 @@ void *handle_results(int id, char *results, size_t len) {
                                CURRENT_ROUND.responded != 0);
 
             ++CURRENT_ROUND.responded;
+            bool run_averaging =
+                CURRENT_ROUND.responded == CURRENT_ROUND.participants;
 
             pthread_mutex_unlock(&result_mutex);
 
             // TODO: allow certain fraction of clients to dropoff
-            if (CURRENT_ROUND.responded == CURRENT_ROUND.participants) {
+            if (run_averaging) {
                 printf("INFO: all clients responded, starting "
                        "FedAvg\n");
                 for (size_t i = 0; i < ARCH_COUNT - 1; ++i) {
@@ -199,7 +205,7 @@ void *handle_results(int id, char *results, size_t len) {
                 }
                 init_nn(&CURRENT_ROUND.nn, CURRENT_ROUND.weights,
                         CURRENT_ROUND.biases);
-                printf("INFO: final model accuracy is %f\n",
+                printf("INFO: final model accuracy against test set is %f\n",
                        accuracy(CURRENT_ROUND.nn, CURRENT_ROUND.test_set));
             }
             break;
@@ -295,7 +301,6 @@ void *handle_incoming_connection(void *con) {
                 goto clean;
             char *content = substr(sb.data, offset, content_len);
             if (content != NULL) {
-                // TODO: create new thread
                 handle_results(id, content, content_len);
             }
         } else if (strncmp(h.url, SHUTDOWN_ENDPOINT,
@@ -345,7 +350,7 @@ void *start_round() {
             close(sock);
         }
 
-        if (ready == 1) {
+        if (ready == CLIENTS_PER_ROUND) {
             ++CURRENT_ROUND.round_number;
             printf("INFO: %zu clients are ready, starting round %zu\n", ready,
                    CURRENT_ROUND.round_number);
