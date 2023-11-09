@@ -117,7 +117,7 @@ int send_weights() {
 
     int serv = connect_main_server();
     if (serv < 0) {
-        goto clean;
+        return -1;
     }
     int ret = sendall(serv, req, req_len);
     if (ret < 0) {

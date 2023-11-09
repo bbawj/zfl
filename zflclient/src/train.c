@@ -18,7 +18,7 @@ void train(Trainer *t) {
         for (int batch = 0; batch < NUM_BATCHES; ++batch) {
             size_t from = batch * BATCH_SIZE;
             Mat sample = mat_slice(t->samples, from, BATCH_SIZE);
-            Region temp = region_alloc_alloc(1024 * 1024);
+            Region temp = region_alloc_alloc(500 * 1024);
             NN g = nn_backprop(&temp, t->model, sample);
             nn_learn(t->model, g, rate);
             k_free(temp.words);

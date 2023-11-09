@@ -324,7 +324,7 @@ clean:
 void *start_round() {
     int delay = 10;
     while (1) {
-        if (CURRENT_ROUND.round_number > CURRENT_ROUND.num_rounds) {
+        if (CURRENT_ROUND.round_number == CURRENT_ROUND.num_rounds) {
             printf("INFO: all %zu rounds completed. Stopping...\n",
                    CURRENT_ROUND.num_rounds);
             break;

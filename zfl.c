@@ -178,7 +178,7 @@ int start_client(int num_clients) {
                        "/opt/zephyr-sdk-0.16.1/sysroots/"
                        "x86_64-pokysdk-linux/usr/bin/qemu-system-i386",
 
-                       "-m", "50", "-cpu", "qemu32,+nx,+pae", "-machine", "q35",
+                       "-m", "15", "-cpu", "qemu32,+nx,+pae", "-machine", "q35",
                        "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
 
                        "-no-reboot", "-nographic", "-no-acpi",
