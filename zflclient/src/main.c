@@ -185,6 +185,7 @@ void handle_incoming_connection(void *sock, void *x, void *y) {
         LOG_ERR("404 resource not found: %s\n", h.url);
     }
 clean:
+    http_free(&h);
     zsock_close(client);
     sb_free(&sb);
     free(sock);
@@ -258,13 +259,15 @@ char *get_request(const char *endpoint, int *received) {
     LOG_INF("Making get request to %s", req);
     int serv = connect_main_server();
     if (serv < 0) {
+        LOG_ERR("could not connect to server: %s\n", strerror(errno));
         zsock_close(serv);
         return NULL;
     }
 
     int ret = sendall(serv, req, len);
     if (ret < 0) {
-        LOG_ERR("could not send to socket: %s\n", strerror(errno));
+        LOG_ERR("could not send to server: %s\n", strerror(errno));
+        zsock_close(serv);
         return NULL;
     }
     StringBuilder sb = {0};
@@ -283,6 +286,7 @@ int req_id() {
         return -1;
     }
     ID = atoi(id_string);
+    free(id_string);
     LOG_INF("Client ID is %d", ID);
     return received;
 }

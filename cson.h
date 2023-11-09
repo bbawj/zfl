@@ -447,6 +447,7 @@ void free_tokens(Token *t) {
     while (t != NULL) {
         free_tokens(t->child);
         Token *temp = t->next;
+        CSON_FREE(t->text);
         CSON_FREE(t);
         t = temp;
     }

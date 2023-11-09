@@ -25,8 +25,8 @@
 #define PORT 8080
 #define PEER_PORT 8080
 #define READ_TIMEOUT 5
-#define CLIENTS_PER_ROUND 2
 
+pthread_mutex_t round_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t result_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t shutdown_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -55,6 +55,10 @@ typedef struct {
 } Result;
 
 typedef struct {
+    size_t num_rounds;
+    size_t clients_per_round;
+
+    bool started;
     size_t round_number;
     size_t participants;
     size_t responded;
@@ -88,7 +92,7 @@ int connect_client(char *addr) {
     struct sockaddr_in addr4;
     addr4.sin_family = AF_INET;
     addr4.sin_port = htons(PEER_PORT);
-    printf("Attempting to connect to %s %d\n", addr, PEER_PORT);
+    printf("INFO: Attempting to connect to %s %d\n", addr, PEER_PORT);
     if (inet_pton(AF_INET, addr, &addr4.sin_addr) <= 0) {
         printf("ERROR: invalid ip address %s\n", addr);
         return -1;
@@ -134,7 +138,8 @@ int send_file(int client_socket, const char *file_path) {
         ret = fread(buf, sizeof(*buf), sizeof(buf), fd);
     }
     if (total_sent > 0) {
-        printf("Successfully sent %zu bytes of data to client\n", total_sent);
+        printf("INFO: Successfully sent %zu bytes of data to client\n",
+               total_sent);
     }
     fclose(fd);
     return total_sent;
@@ -143,7 +148,7 @@ int send_file(int client_socket, const char *file_path) {
 int send_id(int client_socket, char *addr) {
     pthread_mutex_lock(&client_mutex);
     int id = ++CLIENTS.n;
-    printf("ID of client %s is %d\n", addr, id);
+    printf("INFO: ID of client %s is %d\n", addr, id);
     char id_str[20];
     snprintf(id_str, sizeof(id_str), "%d", id);
     char res[256];
@@ -189,8 +194,9 @@ void *handle_results(int id, char *results, size_t len) {
 
             // TODO: allow certain fraction of clients to dropoff
             if (run_averaging) {
-                printf("INFO: all clients responded, starting "
-                       "FedAvg\n");
+                printf("INFO: round %zu all clients responded, starting "
+                       "FedAvg\n",
+                       CURRENT_ROUND.round_number);
                 for (size_t i = 0; i < ARCH_COUNT - 1; ++i) {
                     for (size_t j = 0; j < ARCH[i]; ++j) {
                         for (size_t k = 0; k < ARCH[i + 1]; ++k) {
@@ -207,6 +213,10 @@ void *handle_results(int id, char *results, size_t len) {
                         CURRENT_ROUND.biases);
                 printf("INFO: final model accuracy against test set is %f\n",
                        accuracy(CURRENT_ROUND.nn, CURRENT_ROUND.test_set));
+
+                pthread_mutex_lock(&round_mutex);
+                CURRENT_ROUND.started = false;
+                pthread_mutex_unlock(&round_mutex);
             }
             break;
         }
@@ -249,17 +259,8 @@ void *handle_incoming_connection(void *con) {
         goto clean;
 
     parse_query_param(&h);
-    printf("INFO: HTTP request\nMethod: %s, url: %s\n", h.method, h.url);
-    for (size_t i = 0; i < h.n_query; ++i) {
-        printf("Query %zu. Key: %s, Val: %s\n", i, h.query_keys[i],
-               h.query_vals[i]);
-    }
-    for (size_t i = 0; i < h.n_headers; ++i) {
-        printf("header %zu. Key: %s, Val: %s\n", i, h.header_keys[i],
-               h.header_vals[i]);
-    }
-    // return NULL;
     printf("INFO: %s request for: %s\n", h.method, h.url);
+
     if (strncmp(h.method, GET, strlen(GET)) == 0) {
         if (strncmp(h.url, ID_ENDPOINT, strlen(ID_ENDPOINT)) == 0) {
             send_id(info->sock, info->addr);
@@ -323,8 +324,23 @@ clean:
 void *start_round() {
     int delay = 10;
     while (1) {
+        if (CURRENT_ROUND.round_number > CURRENT_ROUND.num_rounds) {
+            printf("INFO: all %zu rounds completed. Stopping...\n",
+                   CURRENT_ROUND.num_rounds);
+            break;
+        }
         printf("INFO: waiting for %d seconds before starting...\n", delay);
         sleep(delay);
+
+        pthread_mutex_lock(&round_mutex);
+        if (CURRENT_ROUND.started) {
+            printf("INFO: round %zu already started nothing to do...\n",
+                   CURRENT_ROUND.round_number);
+            pthread_mutex_unlock(&round_mutex);
+            continue;
+        }
+        pthread_mutex_unlock(&round_mutex);
+
         printf("INFO: checking client ready status\n");
         size_t ready = 0;
         for (int i = 0; i < CLIENTS.n; ++i) {
@@ -350,7 +366,11 @@ void *start_round() {
             close(sock);
         }
 
-        if (ready == CLIENTS_PER_ROUND) {
+        if (ready == CURRENT_ROUND.clients_per_round) {
+            pthread_mutex_lock(&round_mutex);
+            CURRENT_ROUND.started = true;
+            pthread_mutex_unlock(&round_mutex);
+
             ++CURRENT_ROUND.round_number;
             printf("INFO: %zu clients are ready, starting round %zu\n", ready,
                    CURRENT_ROUND.round_number);
@@ -376,20 +396,26 @@ void *start_round() {
                 }
             }
             // TODO: sigtimedwait
-            break;
         }
     }
     return NULL;
 }
 
-int main(void) {
-    printf("Greetings from server!\n");
+int main(int argc, char **argv) {
+    if (argc != 3) {
+        printf("Usage:\n ./server [num_rounds] [clients_per_round]>\n");
+        return -1;
+    }
+    CURRENT_ROUND.num_rounds = atoi(argv[1]);
+    CURRENT_ROUND.clients_per_round = atoi(argv[2]);
+
+    printf("INFO: Greetings from server!\n");
     CLIENTS.n = 0;
     CLIENTS.client = NULL;
 
     StringBuilder images = {0};
     sb_init(&images, 1024);
-    printf("Opening test image!\n");
+    printf("INFO: opening test image!\n");
     FILE *test_image = fopen("../data/test-images", "r");
     assert(test_image);
     char buf[1024];
@@ -397,22 +423,24 @@ int main(void) {
         int ret = fread(buf, sizeof(*buf), sizeof(buf), test_image);
         sb_append(&images, buf, ret);
         if (ferror(test_image) != 0) {
-            printf("Error reading file %s\n", strerror(errno));
+            printf("ERROR: failed to read test image because: %s\n",
+                   strerror(errno));
         }
     }
     StringBuilder labels = {0};
     sb_init(&labels, 1024);
-    printf("Opening test label!\n");
+    printf("INFO: opening test label!\n");
     FILE *test_labels = fopen("../data/test-labels", "r");
     assert(test_labels);
     while (!feof(test_labels)) {
         int ret = fread(buf, sizeof(*buf), sizeof(buf), test_labels);
         sb_append(&labels, buf, ret);
         if (ferror(test_labels) != 0) {
-            printf("Error reading file %s\n", strerror(errno));
+            printf("ERROR: failed to read file test label because: %s\n",
+                   strerror(errno));
         }
     }
-    printf("Image: %zu, Labels: %zu\n", images.size, labels.size);
+    printf("INFO: image: %zu, labels: %zu\n", images.size, labels.size);
     assert(images.size / IMG_SIZE == labels.size);
 
     printf("INFO: init test set!\n");
@@ -423,6 +451,10 @@ int main(void) {
     assert(CURRENT_ROUND.weights);
     CURRENT_ROUND.biases = malloc(sizeof(float *) * (ARCH_COUNT - 1));
     assert(CURRENT_ROUND.biases);
+    for (int i = 0; i < ARCH_COUNT - 1; ++i) {
+        CURRENT_ROUND.weights[i] = NULL;
+        CURRENT_ROUND.biases[i] = NULL;
+    }
 
     // StringBuilder initial_model;
     // sb_init(&initial_model, 1024);

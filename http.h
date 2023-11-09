@@ -32,9 +32,6 @@ typedef struct {
     char *method;
     char *url;
 
-    size_t response_code;
-    char *response_message;
-
     size_t n_query;
     char **query_keys;
     char **query_vals;
@@ -43,6 +40,19 @@ typedef struct {
     char **header_keys;
     char **header_vals;
 } Http;
+
+void http_free(Http *h) {
+    free(h->method);
+    free(h->url);
+    for (size_t i = 0; i < h->n_query; ++i) {
+        free(h->query_keys[i]);
+        free(h->query_vals[i]);
+    }
+    for (size_t i = 0; i < h->n_headers; ++i) {
+        free(h->header_keys[i]);
+        free(h->header_vals[i]);
+    }
+}
 
 bool is_char(const char *p, const char *c, size_t len) {
     return strncmp(p, c, len) == 0;
@@ -73,35 +83,6 @@ char *substr(const char *p, size_t start, size_t len) {
     memcpy(sub, &p[start], len);
     sub[len] = '\0';
     return sub;
-}
-
-int parse_required_res(Http *h, const char *payload, size_t len) {
-    const char *p = payload;
-    int processed = 0;
-    int code_len = find_first_match(p, len, " ", 1);
-    if (code_len <= 0) {
-        return -1;
-    }
-    h->response_code = atoi(substr(p, 0, code_len));
-    p += code_len + 1;
-    processed += code_len + 1;
-    len -= code_len + 1;
-
-    int message_len = find_first_match(p, len, " ", 1);
-    if (message_len <= 0) {
-        return -1;
-    }
-    h->response_message = substr(p, 0, message_len);
-    p += message_len + 1;
-    processed += message_len + 1;
-    len -= message_len + 1;
-
-    int ret = find_first_match(p, len, "\r\n", 2);
-    if (ret == -1) {
-        return -1;
-    }
-    processed += ret + 2;
-    return processed;
 }
 
 int parse_required_req(Http *h, const char *payload, size_t len) {

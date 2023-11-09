@@ -13,8 +13,6 @@
 #include <unistd.h>
 
 const char *netsetup_path = "./net-setup.sh";
-const char *zflserver_conf = "zflserver.conf";
-const char *zflserver_i = "zflserver.1";
 
 int setup_net_interface(const char *conf, const char *command,
                         const char *iname) {
@@ -44,7 +42,7 @@ int setup_net_interface(const char *conf, const char *command,
     return WEXITSTATUS(status);
 }
 
-int start_server() {
+int start_server(int num_rounds, int clients_per_round) {
     char *server_dir = "./zflserver";
 
     pid_t child = fork();
@@ -55,7 +53,11 @@ int start_server() {
     printf("INFO: launching server process pid: %d\n", child);
     if (child == 0) {
         chdir(server_dir);
-        int ret = execlp("./server", "./server", NULL);
+        char nr[100];
+        snprintf(nr, sizeof(nr), "%d", num_rounds);
+        char cpr[100];
+        snprintf(cpr, sizeof(cpr), "%d", clients_per_round);
+        int ret = execlp("./server", "./server", nr, cpr, NULL);
         if (ret < 0) {
             printf("ERROR: could not run server start as a child process: "
                    "%s\n",
@@ -108,7 +110,6 @@ int start_client(int num_clients) {
     char build_dir[100];
     snprintf(build_dir, sizeof(build_dir), "%s/out", dir);
 
-    char qemu_instance[80];
     char pipe_path[30];
     pid_t process_ids[num_clients];
 
@@ -133,10 +134,6 @@ int start_client(int num_clients) {
             return -1;
         }
 
-        // if (snprintf(qemu_instance, 80, "QEMU_INSTANCE=MAIN") < 0) {
-        //     fprintf(stderr, "ERROR: could not format QEMU_INSTANCE\n");
-        //     return 1;
-        // }
         char *mac = malloc(100);
         srand(time(NULL) + getpid());
 
@@ -195,13 +192,9 @@ int start_client(int num_clients) {
 
                        "-nic", nic_arg,
 
-                       // "-serial", "con",
-
                        "-kernel",
                        "/home/bawj/projects/fyp/zephyrproject/zephyr/zfl/"
                        "zflclient/out/zephyr/zephyr.elf",
-
-                       // "-j", "8", "-k",
 
                        NULL);
             if (ret < 0) {
@@ -251,20 +244,36 @@ int start_client(int num_clients) {
     return 0;
 }
 
+void usage() {
+    printf(
+        "Usage:\n./zfl [server|client] [OPTIONS]\n\nOPTIONS:\n  server:\n    "
+        "NUM_ROUNDS\n    CLIENTS_PER_ROUND\n  client:\n    NUM_CLIENTS");
+}
+
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        printf("Usage:\n./zfl [server|client] <NUM_CLIENTS>\n");
+    if (argc < 3) {
+        usage();
         return -1;
     }
     char *command = argv[1];
     if (strncmp(command, "server", strlen("server")) == 0) {
+        int num_rounds = atoi(argv[2]);
+        if (num_rounds == 0) {
+            usage();
+            return -1;
+        }
+        int clients_per_round = atoi(argv[3]);
+        if (clients_per_round == 0) {
+            usage();
+            return -1;
+        }
         // Setup the server networking
         if (setup_net_interface(NULL, "start", NULL) == EXIT_FAILURE) {
             printf("ERROR: failed to setup server conf\n");
             return -1;
         }
 
-        start_server();
+        start_server(num_rounds, clients_per_round);
         // server wait
         wait(NULL);
 
@@ -276,7 +285,7 @@ int main(int argc, char **argv) {
         int num_clients = atoi(argv[2]);
         start_client(num_clients);
     } else {
-        printf("Usage:\n./zfl [server|client] <NUM_CLIENTS>\n");
+        usage();
         return -1;
     }
 }
