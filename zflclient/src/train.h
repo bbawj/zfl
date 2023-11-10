@@ -3,7 +3,6 @@
 
 #include "../../common.h"
 
-#define NUM_EPOCHS 1
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -15,6 +14,9 @@ typedef struct {
 
     bool samples_ready;
 } Trainer;
+
+extern int NUM_EPOCHS;
+extern int BATCH_SIZE;
 
 void train(Trainer *t);
 #ifdef __cplusplus

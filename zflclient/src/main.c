@@ -20,6 +20,8 @@ LOG_MODULE_REGISTER(zflclient, LOG_LEVEL_DBG);
 #define RANDOM_NN 0
 
 Trainer TRAINER = {0};
+int NUM_EPOCHS = 0;
+int BATCH_SIZE = 0;
 
 int train_labels_size = 0;
 int train_images_size = 0;
@@ -115,20 +117,32 @@ int send_weights() {
                            "POST %s?id=%d \r\nContent-Length: %zu\r\n\r\n",
                            RESULTS_ENDPOINT, ID, weights_len);
 
-    int serv = connect_main_server();
-    if (serv < 0) {
-        return -1;
+    int ret = 0;
+    int serv = -1;
+    int retries = 3;
+    for (int i = 0; i < retries; ++i) {
+        LOG_INF("Sending local weights, current tries: %d", i + 1);
+        serv = connect_main_server();
+        if (serv < 0) {
+            continue;
+        }
+        int ret = sendall(serv, req, req_len);
+        if (ret < 0) {
+            LOG_ERR("could not send req to socket: %s", strerror(errno));
+            if (errno == ENOTCONN) {
+                zsock_close(serv);
+                continue;
+            }
+            break;
+        }
+        ret = sendall(serv, sb.data, weights_len);
+        if (ret < 0) {
+            LOG_ERR("could not send weights to socket: %s", strerror(errno));
+            zsock_close(serv);
+            continue;
+        }
+        break;
     }
-    int ret = sendall(serv, req, req_len);
-    if (ret < 0) {
-        LOG_ERR("could not send to socket: %s", strerror(errno));
-        goto clean;
-    }
-    ret = sendall(serv, sb.data, weights_len);
-    if (ret < 0) {
-        LOG_ERR("could not send to socket: %s", strerror(errno));
-    }
-clean:
     zsock_close(serv);
     sb_free(&sb);
     return ret;
@@ -320,6 +334,18 @@ int run(const struct shell *sh, size_t argc, char **argv) {
         return -1;
     }
 
+    NUM_EPOCHS = atoi(argv[2]);
+    if (NUM_EPOCHS == 0) {
+        LOG_ERR("num epochs: %s is invalid", argv[2]);
+        return -1;
+    }
+
+    BATCH_SIZE = atoi(argv[3]);
+    if (BATCH_SIZE == 0) {
+        LOG_ERR("batch size: %s is invalid", argv[3]);
+        return -1;
+    }
+
     TRAINER.samples_ready = false;
     TRAINER.samples = (Mat){0};
     TRAINER.model = (NN){0};
@@ -348,6 +374,6 @@ int run(const struct shell *sh, size_t argc, char **argv) {
     return 0;
 }
 
-SHELL_CMD_ARG_REGISTER(run, NULL, "Run with IPv4 address", run, 2, 0);
+SHELL_CMD_ARG_REGISTER(run, NULL, "Run with IPv4 address", run, 4, 0);
 
 int main(void) { LOG_INF("Ready"); }

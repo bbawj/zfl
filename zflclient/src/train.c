@@ -8,8 +8,7 @@ void train(Trainer *t) {
     // printf("Sample cols: %zu, Model input: %zu, Model output %zu\n",
     //        t->samples.cols, NN_INPUT(t->model).cols,
     //        NN_OUTPUT(t->model).cols);
-    int NUM_BATCHES = t->n_images / NUM_EPOCHS;
-    int BATCH_SIZE = t->n_images / NUM_BATCHES;
+    int NUM_BATCHES = t->n_images / BATCH_SIZE;
     float rate = 1.0;
 
     for (int epoch = 0; epoch < NUM_EPOCHS; ++epoch) {

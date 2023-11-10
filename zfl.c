@@ -105,7 +105,7 @@ clean:
     return NULL;
 }
 
-int start_client(int num_clients) {
+int start_client(int num_clients, size_t epochs, size_t batch_size) {
     char *dir = "./zflclient";
     char build_dir[100];
     snprintf(build_dir, sizeof(build_dir), "%s/out", dir);
@@ -214,7 +214,8 @@ int start_client(int num_clients) {
             return -1;
         }
         char run_cmd[50];
-        snprintf(run_cmd, sizeof(run_cmd), "run 192.0.2.%d\n", i + 3);
+        snprintf(run_cmd, sizeof(run_cmd), "run 192.0.2.%d %zu %zu\n", i + 3,
+                 epochs, batch_size);
         printf("INFO: sending command '%s' to %s\n", run_cmd, pipe_in);
         if (write(in, run_cmd, strlen(run_cmd) + 1) < 0) {
             printf("write failed IP %s to FIFO pipe %s\n", run_cmd, pipe_path);
@@ -247,7 +248,8 @@ int start_client(int num_clients) {
 void usage() {
     printf(
         "Usage:\n./zfl [server|client] [OPTIONS]\n\nOPTIONS:\n  server:\n    "
-        "NUM_ROUNDS\n    CLIENTS_PER_ROUND\n  client:\n    NUM_CLIENTS");
+        "num_rounds\n    clients_per_round\n  client:\n    num_clients\n    "
+        "epochs\n    batch_size");
 }
 
 int main(int argc, char **argv) {
@@ -283,7 +285,21 @@ int main(int argc, char **argv) {
         }
     } else if (strncmp(command, "client", strlen("client")) == 0) {
         int num_clients = atoi(argv[2]);
-        start_client(num_clients);
+        if (num_clients == 0) {
+            usage();
+            return -1;
+        }
+        int epochs = atoi(argv[3]);
+        if (epochs == 0) {
+            usage();
+            return -1;
+        }
+        int batch_size = atoi(argv[4]);
+        if (batch_size == 0) {
+            usage();
+            return -1;
+        }
+        start_client(num_clients, epochs, batch_size);
     } else {
         usage();
         return -1;
