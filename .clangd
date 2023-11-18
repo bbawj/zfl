@@ -1,4 +1,5 @@
 CompileFlags: # Tweak the parse settings
   Add:
     - "--include-directory=/usr/include"
+    - "--include-directory=/opt/raylib/src"
   Remove: [-m*, -f*]

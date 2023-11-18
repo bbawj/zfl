@@ -1,6 +1,7 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(zflclient, LOG_LEVEL_DBG);
 
+#include <zephyr/debug/thread_analyzer.h>
 #include <zephyr/kernel.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/shell/shell.h>

@@ -192,9 +192,7 @@ int start_client(int num_clients, size_t epochs, size_t batch_size) {
 
                        "-nic", nic_arg,
 
-                       "-kernel",
-                       "/home/bawj/projects/fyp/zephyrproject/zephyr/zfl/"
-                       "zflclient/out/zephyr/zephyr.elf",
+                       "-kernel", "./zflclient/out/zephyr/zephyr.elf",
 
                        NULL);
             if (ret < 0) {
@@ -206,7 +204,7 @@ int start_client(int num_clients, size_t epochs, size_t batch_size) {
             }
         }
 
-        sleep(5);
+        sleep(3);
 
         int in = open(pipe_in, O_WRONLY);
         if (in < 0) {

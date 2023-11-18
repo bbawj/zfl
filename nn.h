@@ -21,7 +21,7 @@
 #define NN_RELU_PARAM 0.01f
 #endif // NN_RELU_PARAM
 
-#ifdef SERVER
+#ifdef IS_SERVER
 #include <stdlib.h>
 #define NN_MALLOC malloc
 #else

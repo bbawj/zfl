@@ -1,9 +1,11 @@
-#define SERVER
+#include "raylib.h"
+#define IS_SERVER
 #define SB_IMPLEMENTATION
 #define CSON_IMPLEMENTATION
 #define NN_IMPLEMENTATION
 #define COMMON_IMPLEMENTATION
 #include "../../common.h"
+#include "../../da.h"
 #include "../../http.h"
 #include "../../zflclient/src/train.h"
 #include <arpa/inet.h>
@@ -26,6 +28,7 @@
 #define PEER_PORT 8080
 #define READ_TIMEOUT 5
 
+pthread_mutex_t bytes_transferred_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t round_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t result_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -44,20 +47,6 @@ typedef struct {
 } Client;
 
 typedef struct {
-    int n;
-    Client *client;
-} Clients;
-
-typedef struct {
-    int client_id;
-    char *bytes;
-    size_t size;
-} Result;
-
-typedef struct {
-    size_t num_rounds;
-    size_t clients_per_round;
-
     bool started;
     size_t round_number;
     size_t participants;
@@ -68,8 +57,23 @@ typedef struct {
     NN nn;
 } Round;
 
-static Clients CLIENTS = {0};
-static Round CURRENT_ROUND = {0};
+typedef struct {
+    size_t num_rounds;
+    size_t clients_per_round;
+    size_t bytes_transferred;
+    float *accuracies;
+
+    Client *clients;
+    Round current_round;
+} Server;
+
+static Server SERVER = {0};
+
+void increment_bytes_transferred(size_t bytes) {
+    pthread_mutex_lock(&bytes_transferred_mutex);
+    SERVER.bytes_transferred += bytes;
+    pthread_mutex_unlock(&bytes_transferred_mutex);
+}
 
 static int sendall(int sock, const char *buf, size_t len) {
     while (len) {
@@ -147,19 +151,18 @@ int send_file(int client_socket, const char *file_path) {
 
 int send_id(int client_socket, char *addr) {
     pthread_mutex_lock(&client_mutex);
-    int id = ++CLIENTS.n;
+    int id = da_len(SERVER.clients) + 1;
     printf("INFO: ID of client %s is %d\n", addr, id);
     char id_str[20];
     snprintf(id_str, sizeof(id_str), "%d", id);
     char res[256];
     int len = snprintf(res, sizeof(res), "%s", id_str);
-    CLIENTS.client = realloc(CLIENTS.client, sizeof(Client) * CLIENTS.n);
-    CLIENTS.client[id - 1].id = id;
-    CLIENTS.client[id - 1].ipaddr = strdup(addr);
-    CLIENTS.client[id - 1].ready = false;
+    Client c = (Client){.id = id, .ipaddr = strdup(addr), .ready = false};
+    da_put(SERVER.clients, c);
     pthread_mutex_unlock(&client_mutex);
 
     int sent = send(client_socket, res, len, 0);
+    increment_bytes_transferred(sent);
     return sent;
 }
 
@@ -177,49 +180,45 @@ int send_training_images(int client_socket, int id) {
 
 void *handle_results(int id, char *results, size_t len) {
     printf("INFO: Client %d responded with results size %zu\n", id, len);
-    for (int i = 0; i < CLIENTS.n; ++i) {
-        Client *c = &CLIENTS.client[i];
-        if (c->id == id) {
-            pthread_mutex_lock(&result_mutex);
+    pthread_mutex_lock(&result_mutex);
 
-            parse_weights_json(results, len, CURRENT_ROUND.weights,
-                               CURRENT_ROUND.biases,
-                               CURRENT_ROUND.responded != 0);
+    parse_weights_json(results, len, SERVER.current_round.weights,
+                       SERVER.current_round.biases,
+                       SERVER.current_round.responded != 0);
 
-            ++CURRENT_ROUND.responded;
-            bool run_averaging =
-                CURRENT_ROUND.responded == CURRENT_ROUND.participants;
+    ++SERVER.current_round.responded;
+    // TODO: allow certain fraction of clients to dropoff
+    bool run_averaging =
+        SERVER.current_round.responded == SERVER.current_round.participants;
 
-            pthread_mutex_unlock(&result_mutex);
+    pthread_mutex_unlock(&result_mutex);
 
-            // TODO: allow certain fraction of clients to dropoff
-            if (run_averaging) {
-                printf("INFO: round %zu all clients responded, starting "
-                       "FedAvg\n",
-                       CURRENT_ROUND.round_number);
-                for (size_t i = 0; i < ARCH_COUNT - 1; ++i) {
-                    for (size_t j = 0; j < ARCH[i]; ++j) {
-                        for (size_t k = 0; k < ARCH[i + 1]; ++k) {
-                            CURRENT_ROUND.weights[i][j * ARCH[i + 1] + k] /=
-                                CURRENT_ROUND.participants;
-                        }
-                    }
-                    for (size_t j = 0; j < ARCH[i + 1]; ++j) {
-                        CURRENT_ROUND.biases[i][j] /=
-                            CURRENT_ROUND.participants;
-                    }
+    if (run_averaging) {
+        printf("INFO: round %zu all clients responded, starting "
+               "FedAvg\n",
+               SERVER.current_round.round_number);
+        for (size_t i = 0; i < ARCH_COUNT - 1; ++i) {
+            for (size_t j = 0; j < ARCH[i]; ++j) {
+                for (size_t k = 0; k < ARCH[i + 1]; ++k) {
+                    SERVER.current_round.weights[i][j * ARCH[i + 1] + k] /=
+                        SERVER.current_round.participants;
                 }
-                init_nn(&CURRENT_ROUND.nn, CURRENT_ROUND.weights,
-                        CURRENT_ROUND.biases);
-                printf("INFO: final model accuracy against test set is %f\n",
-                       accuracy(CURRENT_ROUND.nn, CURRENT_ROUND.test_set));
-
-                pthread_mutex_lock(&round_mutex);
-                CURRENT_ROUND.started = false;
-                pthread_mutex_unlock(&round_mutex);
             }
-            break;
+            for (size_t j = 0; j < ARCH[i + 1]; ++j) {
+                SERVER.current_round.biases[i][j] /=
+                    SERVER.current_round.participants;
+            }
         }
+        init_nn(&SERVER.current_round.nn, SERVER.current_round.weights,
+                SERVER.current_round.biases);
+        float acc =
+            accuracy(SERVER.current_round.nn, SERVER.current_round.test_set);
+        printf("INFO: final model accuracy against test set is %f\n", acc);
+        da_put(SERVER.accuracies, acc);
+
+        pthread_mutex_lock(&round_mutex);
+        SERVER.current_round.started = false;
+        pthread_mutex_unlock(&round_mutex);
     }
     return NULL;
 }
@@ -232,14 +231,14 @@ int extract_id(Http *h) {
     }
     char *endptr;
     errno = 0;
-    int id = strtol(id_str, &endptr, 10);
+    size_t id = strtol(id_str, &endptr, 10);
     if (errno != 0) {
-        printf("ERROR: id %d could not be converted to int\n", id);
+        printf("ERROR: id %zu could not be converted to size_t\n", id);
         return -1;
     }
-    if (id < 1 || id > CLIENTS.n) {
-        printf("ERROR: id %d is invalid, there only %d clients\n", id,
-               CLIENTS.n);
+    if (id < 1 || id > da_len(SERVER.clients)) {
+        printf("ERROR: id %zu is invalid, there only %zu clients\n", id,
+               da_len(SERVER.clients));
         return -1;
     }
     return id;
@@ -250,13 +249,16 @@ void *handle_incoming_connection(void *con) {
     Http h = {0};
     StringBuilder sb = {0};
     sb_init(&sb, 1024);
+    size_t total_recv = 0;
 
     int required_len = recv_required_req(&h, &sb, info->sock);
     if (required_len < 0)
         goto clean;
+    total_recv += required_len;
     int optional_len = recv_optional_headers(&h, &sb, info->sock, required_len);
     if (optional_len < 0)
         goto clean;
+    total_recv += optional_len;
 
     parse_query_param(&h);
     printf("INFO: %s request for: %s\n", h.method, h.url);
@@ -300,6 +302,9 @@ void *handle_incoming_connection(void *con) {
             int ret = recv_content(&sb, info->sock, offset, content_len);
             if (ret == -1)
                 goto clean;
+
+            total_recv += ret;
+
             char *content = substr(sb.data, offset, content_len);
             if (content != NULL) {
                 handle_results(id, content, content_len);
@@ -316,6 +321,7 @@ void *handle_incoming_connection(void *con) {
         printf("INFO: 405 method not supported: %s\n", h.method);
     }
 clean:
+    increment_bytes_transferred(total_recv);
     close(info->sock);
     free(con);
     return 0;
@@ -324,18 +330,18 @@ clean:
 void *start_round() {
     int delay = 10;
     while (1) {
-        if (CURRENT_ROUND.round_number == CURRENT_ROUND.num_rounds) {
+        if (SERVER.current_round.round_number == SERVER.num_rounds) {
             printf("INFO: all %zu rounds completed. Stopping...\n",
-                   CURRENT_ROUND.num_rounds);
+                   SERVER.current_round.round_number);
             break;
         }
         printf("INFO: waiting for %d seconds before starting...\n", delay);
         sleep(delay);
 
         pthread_mutex_lock(&round_mutex);
-        if (CURRENT_ROUND.started) {
+        if (SERVER.current_round.started) {
             printf("INFO: round %zu already started nothing to do...\n",
-                   CURRENT_ROUND.round_number);
+                   SERVER.current_round.round_number);
             pthread_mutex_unlock(&round_mutex);
             continue;
         }
@@ -343,8 +349,8 @@ void *start_round() {
 
         printf("INFO: checking client ready status\n");
         size_t ready = 0;
-        for (int i = 0; i < CLIENTS.n; ++i) {
-            Client *c = &CLIENTS.client[i];
+        for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
+            Client *c = &SERVER.clients[i];
             int sock = connect_client(c->ipaddr);
             char req[256];
             snprintf(req, sizeof(req), "%s %s \r\n\r\n", GET, READY_ENDPOINT);
@@ -366,24 +372,24 @@ void *start_round() {
             close(sock);
         }
 
-        if (ready == CURRENT_ROUND.clients_per_round) {
+        if (ready == SERVER.clients_per_round) {
             pthread_mutex_lock(&round_mutex);
-            CURRENT_ROUND.started = true;
+            SERVER.current_round.started = true;
             pthread_mutex_unlock(&round_mutex);
 
-            ++CURRENT_ROUND.round_number;
+            ++SERVER.current_round.round_number;
             printf("INFO: %zu clients are ready, starting round %zu\n", ready,
-                   CURRENT_ROUND.round_number);
-            for (int i = 0; i < CLIENTS.n; ++i) {
-                Client c = CLIENTS.client[i];
+                   SERVER.current_round.round_number);
+            for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
+                Client c = SERVER.clients[i];
                 if (c.ready) {
-                    ++CURRENT_ROUND.participants;
+                    ++SERVER.current_round.participants;
                     int sock = connect_client(c.ipaddr);
                     char req[256];
                     StringBuilder sb;
                     sb_init(&sb, 1024);
                     size_t weights_len =
-                        weights_to_string(&sb, &CURRENT_ROUND.nn);
+                        weights_to_string(&sb, &SERVER.current_round.nn);
                     int len =
                         snprintf(req, sizeof(req),
                                  "POST /train \r\nContent-Length: %zu\r\n\r\n",
@@ -391,6 +397,7 @@ void *start_round() {
                     printf("INFO: sending req %s\n", req);
                     sendall(sock, req, len);
                     sendall(sock, sb.data, weights_len);
+                    increment_bytes_transferred(weights_len + len);
                     sb_free(&sb);
                     close(sock);
                 }
@@ -401,17 +408,52 @@ void *start_round() {
     return NULL;
 }
 
+void *accept_conns(void *fd) {
+    int sock = *(int *)fd;
+    int client_socket;
+    struct sockaddr_in client_addr;
+    socklen_t client_size = sizeof(client_addr);
+
+    while (1) {
+        pthread_mutex_lock(&shutdown_mutex);
+        if (should_shutdown) {
+            printf("INFO: shutting down\n");
+            return 0;
+        }
+        pthread_mutex_unlock(&shutdown_mutex);
+
+        client_socket =
+            accept(sock, (struct sockaddr *)&client_addr, &client_size);
+        if (client_socket == -1) {
+            printf("ERROR: accept because %s\n", strerror(errno));
+        }
+
+        struct timeval tv;
+        tv.tv_sec = READ_TIMEOUT;
+        tv.tv_usec = 0;
+        setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv,
+                   sizeof(tv));
+
+        ConnectionInfo *con = malloc(sizeof(ConnectionInfo));
+        con->sock = client_socket;
+        con->addr = inet_ntoa(client_addr.sin_addr);
+        printf("INFO: Client connected from %s\n", con->addr);
+        pthread_t th;
+        pthread_create(&th, NULL, handle_incoming_connection, con);
+    }
+}
+
 int main(int argc, char **argv) {
     if (argc != 3) {
         printf("Usage:\n ./server [num_rounds] [clients_per_round]>\n");
         return -1;
     }
-    CURRENT_ROUND.num_rounds = atoi(argv[1]);
-    CURRENT_ROUND.clients_per_round = atoi(argv[2]);
+    SERVER.num_rounds = atoi(argv[1]);
+    SERVER.clients_per_round = atoi(argv[2]);
+    SERVER.accuracies = NULL;
+    SERVER.clients = NULL;
 
     printf("INFO: Greetings from server!\n");
-    CLIENTS.n = 0;
-    CLIENTS.client = NULL;
 
     StringBuilder images = {0};
     sb_init(&images, 1024);
@@ -444,18 +486,20 @@ int main(int argc, char **argv) {
     assert(images.size / IMG_SIZE == labels.size);
 
     printf("INFO: init test set!\n");
-    CURRENT_ROUND.test_set = init_train_set(images.data, labels.data, 10000);
+    SERVER.current_round.test_set =
+        init_train_set(images.data, labels.data, 10000);
     printf("INFO: test set loaded!\n");
 
-    CURRENT_ROUND.weights = malloc(sizeof(float *) * (ARCH_COUNT - 1));
-    assert(CURRENT_ROUND.weights);
-    CURRENT_ROUND.biases = malloc(sizeof(float *) * (ARCH_COUNT - 1));
-    assert(CURRENT_ROUND.biases);
+    SERVER.current_round.weights = malloc(sizeof(float *) * (ARCH_COUNT - 1));
+    assert(SERVER.current_round.weights);
+    SERVER.current_round.biases = malloc(sizeof(float *) * (ARCH_COUNT - 1));
+    assert(SERVER.current_round.biases);
     for (int i = 0; i < ARCH_COUNT - 1; ++i) {
-        CURRENT_ROUND.weights[i] = NULL;
-        CURRENT_ROUND.biases[i] = NULL;
+        SERVER.current_round.weights[i] = NULL;
+        SERVER.current_round.biases[i] = NULL;
     }
 
+    // TODO: add optional arg for intial model file
     // StringBuilder initial_model;
     // sb_init(&initial_model, 1024);
     // FILE *init = fopen("./initial_weights.json", "r");
@@ -469,23 +513,25 @@ int main(int argc, char **argv) {
     // }
     //
     // parse_weights_json(initial_model.data, initial_model.size,
-    //                    CURRENT_ROUND.weights, CURRENT_ROUND.biases, false);
-    // init_nn(&CURRENT_ROUND.nn, CURRENT_ROUND.weights, CURRENT_ROUND.biases);
-    init_nn(&CURRENT_ROUND.nn, NULL, NULL);
+    //                    SERVER.current_round.weights, CURRENT_ROUND.biases,
+    //                    false);
+    // init_nn(&SERVER.current_round.nn, CURRENT_ROUND.weights,
+    // CURRENT_ROUND.biases);
+    init_nn(&SERVER.current_round.nn, NULL, NULL);
 
-    int sock;
+    int *sock = malloc(sizeof(int));
     struct sockaddr_in name;
-    sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (sock < 0) {
+    *sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (*sock < 0) {
         printf("ERROR: could not create socket: %s\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
     const int enable = 1;
-    if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
+    if (setsockopt(*sock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
         printf("ERROR: could not set socket opt: %s\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
-    if (setsockopt(sock, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) < 0) {
+    if (setsockopt(*sock, SOL_SOCKET, SO_REUSEPORT, &enable, sizeof(int)) < 0) {
         printf("ERROR: could not set socket opt: %s\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
@@ -494,12 +540,12 @@ int main(int argc, char **argv) {
     name.sin_family = AF_INET;
     name.sin_port = htons(PORT);
     inet_pton(AF_INET, "192.0.2.2", &name.sin_addr);
-    if (bind(sock, (struct sockaddr *)&name, sizeof(name)) < 0) {
+    if (bind(*sock, (struct sockaddr *)&name, sizeof(name)) < 0) {
         printf("ERROR: could not bind socket: %s\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
 
-    if (listen(sock, 100) == -1) {
+    if (listen(*sock, 100) == -1) {
         printf("ERROR: could not listen on socket: %s\n", strerror(errno));
         exit(EXIT_FAILURE);
     }
@@ -507,38 +553,69 @@ int main(int argc, char **argv) {
            "port %d...\n",
            PORT);
 
-    int client_socket;
-    struct sockaddr_in client_addr;
-    socklen_t client_size = sizeof(client_addr);
-
     pthread_t th;
     pthread_create(&th, NULL, start_round, NULL);
 
-    while (1) {
-        pthread_mutex_lock(&shutdown_mutex);
-        if (should_shutdown) {
-            printf("INFO: shutting down\n");
-            return 0;
+    pthread_t listener;
+    pthread_create(&listener, NULL, accept_conns, sock);
+
+    // Start UI
+    int window_width = 1600;
+    int window_height = 900;
+    InitWindow(window_width, window_height, "zfl");
+
+    while (!WindowShouldClose()) {
+        window_width = GetScreenWidth();
+        window_height = GetScreenHeight();
+
+        int panel_start = 10;
+        int panel_margin = 10;
+        int panel_element_spacing = 20;
+
+        int chart_start_x = 0.2 * window_width;
+        int chart_start_y = 0.1 * window_height;
+        int chart_height = 0.5 * window_height;
+        int chart_width = 0.5 * window_width;
+        int chart_padding = 10;
+
+        BeginDrawing();
+        ClearBackground(BLACK);
+        DrawText("Welcome to server UI", panel_start, panel_margin, 20,
+                 RAYWHITE);
+        char stats[100];
+        snprintf(stats, sizeof(stats), "Current Round: %zu",
+                 SERVER.current_round.round_number);
+        DrawText(stats, panel_start, panel_start + panel_element_spacing, 20,
+                 RAYWHITE);
+        snprintf(stats, sizeof(stats), "Bytes Transferred: %zu",
+                 SERVER.bytes_transferred);
+        DrawText(stats, panel_start, panel_start + 2 * panel_element_spacing,
+                 20, RAYWHITE);
+
+        DrawText("Accuracies on test set:", chart_start_x, panel_margin, 20,
+                 RAYWHITE);
+        DrawLine(chart_start_x, chart_start_y, chart_start_x,
+                 chart_height + chart_padding, RAYWHITE);
+        DrawLine(chart_start_x, chart_height + chart_padding,
+                 chart_start_x + chart_width, chart_height + chart_padding,
+                 RAYWHITE);
+
+        if (SERVER.accuracies) {
+            int spacing = chart_width / da_len(SERVER.accuracies);
+            for (size_t i = 0; i < da_len(SERVER.accuracies) - 1; ++i) {
+                Vector2 start =
+                    (Vector2){.x = (float)i * spacing + chart_start_x,
+                              .y = chart_height * (1 - SERVER.accuracies[i]) +
+                                   chart_start_y};
+                Vector2 end = (Vector2){
+                    .x = (float)(i + 1) * spacing + chart_start_x,
+                    .y = chart_height * (1 - SERVER.accuracies[i + 1]) +
+                         chart_start_y};
+                DrawLineV(start, end, GREEN);
+            }
         }
-        pthread_mutex_unlock(&shutdown_mutex);
-
-        client_socket =
-            accept(sock, (struct sockaddr *)&client_addr, &client_size);
-        if (client_socket == -1) {
-            printf("ERROR: accept because %s\n", strerror(errno));
-        }
-
-        struct timeval tv;
-        tv.tv_sec = READ_TIMEOUT;
-        tv.tv_usec = 0;
-        setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv,
-                   sizeof(tv));
-
-        ConnectionInfo *con = malloc(sizeof(ConnectionInfo));
-        con->sock = client_socket;
-        con->addr = inet_ntoa(client_addr.sin_addr);
-        printf("INFO: Client connected from %s\n", con->addr);
-        pthread_t th;
-        pthread_create(&th, NULL, handle_incoming_connection, con);
+        EndDrawing();
     }
+
+    CloseWindow();
 }

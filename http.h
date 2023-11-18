@@ -2,7 +2,7 @@
 #define HTTP_H_
 
 #include "sb.h"
-#ifdef SERVER
+#ifdef IS_SERVER
 #include <sys/socket.h>
 #else
 #include "zephyr/net/socket.h"
