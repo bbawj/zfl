@@ -48,6 +48,7 @@ typedef struct {
 
 typedef struct {
     bool started;
+    bool averaging;
     size_t round_number;
     size_t participants;
     size_t responded;
@@ -180,9 +181,29 @@ int send_training_images(int client_socket, int id) {
 
 void *handle_results(int id, char *results, size_t len) {
     printf("INFO: Client %d responded with results size %zu\n", id, len);
-    pthread_mutex_lock(&result_mutex);
+    Payload p = {0};
+    if (deserialize_training_data(results, len, &p) == -1) {
+        printf("ERROR: invalid json response for results\n");
+        goto clean;
+    }
+    pthread_mutex_lock(&round_mutex);
+    if (p.round_number != SERVER.current_round.round_number) {
+        pthread_mutex_unlock(&round_mutex);
+        printf("INFO: Client %d responded for round %zu, skipping...\n", id,
+               p.round_number);
+        goto clean;
+    }
+    pthread_mutex_unlock(&round_mutex);
 
-    parse_weights_json(results, len, SERVER.current_round.weights,
+    pthread_mutex_lock(&result_mutex);
+    if (SERVER.current_round.averaging) {
+        pthread_mutex_unlock(&result_mutex);
+        printf("INFO: Client %d responded for round %zu but server already "
+               "averaging\n",
+               id, p.round_number);
+        goto clean;
+    }
+    parse_weights_json(p.weights, SERVER.current_round.weights,
                        SERVER.current_round.biases,
                        SERVER.current_round.responded != 0);
 
@@ -190,7 +211,7 @@ void *handle_results(int id, char *results, size_t len) {
     // TODO: allow certain fraction of clients to dropoff
     bool run_averaging =
         SERVER.current_round.responded == SERVER.current_round.participants;
-
+    SERVER.current_round.averaging = run_averaging;
     pthread_mutex_unlock(&result_mutex);
 
     if (run_averaging) {
@@ -220,6 +241,9 @@ void *handle_results(int id, char *results, size_t len) {
         SERVER.current_round.started = false;
         pthread_mutex_unlock(&round_mutex);
     }
+clean:
+    free_tokens(p.json);
+    free(results);
     return NULL;
 }
 
@@ -388,21 +412,22 @@ void *start_round() {
                     char req[256];
                     StringBuilder sb;
                     sb_init(&sb, 1024);
-                    size_t weights_len =
-                        weights_to_string(&sb, &SERVER.current_round.nn);
-                    int len =
-                        snprintf(req, sizeof(req),
-                                 "POST /train \r\nContent-Length: %zu\r\n\r\n",
-                                 weights_len);
+                    sb_appendf(&sb, "{\"round\": %zu, \"weights\": ",
+                               SERVER.current_round.round_number);
+                    weights_to_string(&sb, &SERVER.current_round.nn);
+                    sb_append(&sb, "}", 1);
+                    int len = snprintf(
+                        req, sizeof(req),
+                        "POST /train \r\nContent-Length: %zu\r\n\r\n", sb.size);
                     printf("INFO: sending req %s\n", req);
                     sendall(sock, req, len);
-                    sendall(sock, sb.data, weights_len);
-                    increment_bytes_transferred(weights_len + len);
+                    sendall(sock, sb.data, sb.size);
+
+                    increment_bytes_transferred(sb.size + len);
                     sb_free(&sb);
                     close(sock);
                 }
             }
-            // TODO: sigtimedwait
         }
     }
     return NULL;

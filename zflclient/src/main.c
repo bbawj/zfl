@@ -59,7 +59,7 @@ int recvall(int sock, StringBuilder *sb) {
     return total;
 }
 
-int init_model(char *data, size_t len) {
+int init_model(Token *weights) {
     LOG_INF("Initializing Model, random: %d", RANDOM_NN);
 #if RANDOM_NN
     init_nn(NULL, NULL);
@@ -69,7 +69,7 @@ int init_model(char *data, size_t len) {
     float **initial_bias = malloc(sizeof(float *) * (ARCH_COUNT - 1));
     assert(initial_bias);
     LOG_INF("Parsing json");
-    parse_weights_json(data, len, initial_weights, initial_bias, false);
+    parse_weights_json(weights, initial_weights, initial_bias, false);
     LOG_INF("Initing nn");
     init_nn(&TRAINER.model, initial_weights, initial_bias);
     for (int i = 0; i < ARCH_COUNT - 1; ++i) {
@@ -81,8 +81,6 @@ int init_model(char *data, size_t len) {
 #endif /* if RANDOM_NN */
 
     LOG_INF("NN init!\n");
-
-    free(data);
     return 0;
 }
 
@@ -109,14 +107,16 @@ int connect_main_server() {
     return serv;
 }
 
-int send_weights() {
+int send_weights(size_t round_number) {
     StringBuilder sb;
     sb_init(&sb, 1024);
-    size_t weights_len = weights_to_string(&sb, &TRAINER.model);
+    sb_appendf(&sb, "{\"round\": %zu, \"weights\": ", round_number);
+    weights_to_string(&sb, &TRAINER.model);
+    sb_append(&sb, "}", 1);
     char req[256];
     int req_len = snprintf(req, sizeof(req),
                            "POST %s?id=%d \r\nContent-Length: %zu\r\n\r\n",
-                           RESULTS_ENDPOINT, ID, weights_len);
+                           RESULTS_ENDPOINT, ID, sb.size);
 
     int ret = 0;
     int serv = -1;
@@ -136,7 +136,7 @@ int send_weights() {
             }
             break;
         }
-        ret = sendall(serv, sb.data, weights_len);
+        ret = sendall(serv, sb.data, sb.size);
         if (ret < 0) {
             LOG_ERR("could not send weights to socket: %s", strerror(errno));
             zsock_close(serv);
@@ -186,12 +186,17 @@ void handle_incoming_connection(void *sock, void *x, void *y) {
             goto clean;
         }
         char *content = substr(sb.data, offset, content_len);
-        init_model(content, content_len);
+
+        Payload p = {0};
+        deserialize_training_data(content, content_len, &p);
+        init_model(p.weights);
+
         LOG_INF("Starting training");
         train(&TRAINER);
 
-        send_weights();
+        send_weights(p.round_number);
 
+        free_tokens(p.json);
         free(content);
     } else if (strncmp(h.url, READY_ENDPOINT, strlen(READY_ENDPOINT)) == 0) {
         char *ready = TRAINER.samples_ready ? "true" : "false";

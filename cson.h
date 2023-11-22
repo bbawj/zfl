@@ -212,19 +212,24 @@ void skip_whitespace(Cson *c) {
         case '\n':
         case '\r':
         case ' ':
-        case '\0':
             advance(c);
             continue;
+        case '\0':
+            return;
         default:
             return;
         }
     }
 }
 
-char scan_next(Cson *c) {
-    advance(c);
+char scan(Cson *c) {
     skip_whitespace(c);
     return peek(c);
+}
+
+char scan_next(Cson *c) {
+    advance(c);
+    return scan(c);
 }
 
 bool scan_string(Cson *c, Token *res) {
@@ -237,6 +242,9 @@ bool scan_string(Cson *c, Token *res) {
 
     while (true) {
         char next = advance(c);
+        if (next == '\0') {
+            return false;
+        }
         len++;
 
         if (next == '"') {
@@ -250,6 +258,7 @@ bool scan_string(Cson *c, Token *res) {
                 res->text = text;
             }
             res->type = STRING;
+            advance(c);
             return true;
         } else if (next == '\\') {
             char next_next = advance(c);
@@ -316,8 +325,7 @@ bool scan_array(Cson *c, Token *res) {
             free(next);
             return false;
         }
-        skip_whitespace(c);
-        cur = peek(c);
+        cur = scan(c);
         if (cur == ',') {
             cur = scan_next(c);
         }
@@ -343,7 +351,7 @@ bool scan_object(Cson *c, Token *res) {
             free(next);
             return false;
         }
-        cur = scan_next(c);
+        cur = scan(c);
         if (cur != ':') {
             free(next);
             fprintf(stderr, "Expected ':' after key\n");
@@ -364,9 +372,9 @@ bool scan_object(Cson *c, Token *res) {
         next->child = child;
         prev = next;
 
-        cur = scan_next(c);
+        cur = scan(c);
         if (cur == ',') {
-            advance(c);
+            cur = scan_next(c);
         }
     }
     advance(c);
@@ -376,8 +384,7 @@ bool scan_object(Cson *c, Token *res) {
 
 bool scan_token(Cson *c, Token *res) {
     while (true) {
-        skip_whitespace(c);
-        char cur = peek(c);
+        char cur = scan(c);
         switch (cur) {
         case '\0':
             return false;

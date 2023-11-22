@@ -12,8 +12,15 @@
 #define OUTPUT 10
 #define ARCH_COUNT 3
 
+typedef struct {
+    Token *json;
+    size_t round_number;
+    Token *weights;
+} Payload;
+
 Mat init_train_set(char *img_data, char *label_data, int n_images);
-int parse_weights_json(char *bytes, size_t len, float **initial_weights,
+int deserialize_training_data(char *data, size_t size, Payload *p);
+int parse_weights_json(Token *weights, float **initial_weights,
                        float **initial_bias, bool accum);
 int insert_weights_to_nn(NN nn, float **initial_weights, float **initial_bias);
 void init_nn(NN *nn, float **initial_weights, float **initial_bias);
@@ -86,16 +93,39 @@ Mat init_train_set(char *img_data, char *label_data, int n_images) {
     return t;
 }
 
-int parse_weights_json(char *bytes, size_t len, float **initial_weights,
-                       float **initial_bias, bool accum) {
+int deserialize_training_data(char *data, size_t size, Payload *p) {
     Cson c = {0};
-    c.b = bytes;
-    c.size = len;
-    c.cap = len;
+    c.b = data;
+    c.size = size;
+    c.cap = size;
     c.cur = 0;
 
-    Token *json = parse_json(&c);
-    Token *weights = json->child;
+    p->json = parse_json(&c);
+    Token *key = p->json->next;
+    const char round_key[] = "round";
+    const char weights_key[] = "weights";
+    size_t round_number = 0;
+    while (key != NULL) {
+        if (strncmp(key->text, round_key, strlen(round_key)) == 0) {
+            round_number = atol(key->child->text);
+            if (round_number == 0) {
+                printf("Round number not received\n");
+                return -1;
+            }
+            p->round_number = round_number;
+        } else if (strncmp(key->text, weights_key, strlen(weights_key)) == 0) {
+            p->weights = key->child->child;
+        } else {
+            printf("Invalid key %s\n", key->text);
+            return -1;
+        }
+        key = key->next;
+    }
+    return 0;
+}
+
+int parse_weights_json(Token *weights, float **initial_weights,
+                       float **initial_bias, bool accum) {
     Token *biases = weights->next;
 
     if (!accum) {
@@ -130,7 +160,6 @@ int parse_weights_json(char *bytes, size_t len, float **initial_weights,
             biases = biases->next->next;
         }
     }
-    free_tokens(json);
     return 0;
 }
 
