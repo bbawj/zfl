@@ -58,11 +58,15 @@ typedef struct {
     NN nn;
 } Round;
 
+#define LOG_LENGTH_MAX 100
+
 typedef struct {
     size_t num_rounds;
     size_t clients_per_round;
     size_t bytes_transferred;
     float *accuracies;
+    char *logs[LOG_LENGTH_MAX];
+    size_t log_len;
 
     Client *clients;
     Round current_round;
@@ -74,6 +78,23 @@ void increment_bytes_transferred(size_t bytes) {
     pthread_mutex_lock(&bytes_transferred_mutex);
     SERVER.bytes_transferred += bytes;
     pthread_mutex_unlock(&bytes_transferred_mutex);
+}
+
+void log_append(char *msg, ...) {
+    char buf[1024];
+    va_list args;
+    va_start(args, msg);
+    int rc = vsnprintf(buf, sizeof(buf), msg, args);
+    if (rc < 0) {
+        printf("ERROR: failed to append to log because %s\n", strerror(errno));
+    }
+    va_end(args);
+    if (SERVER.log_len == LOG_LENGTH_MAX) {
+        free(SERVER.logs[0]);
+        memmove(&SERVER.logs, &SERVER.logs[1], LOG_LENGTH_MAX - 1);
+        SERVER.log_len--;
+    }
+    SERVER.logs[SERVER.log_len++] = strdup(buf);
 }
 
 static int sendall(int sock, const char *buf, size_t len) {
@@ -359,7 +380,7 @@ void *start_round() {
                    SERVER.current_round.round_number);
             break;
         }
-        printf("INFO: waiting for %d seconds before starting...\n", delay);
+        log_append("INFO: waiting for %d seconds before starting...\n", delay);
         sleep(delay);
 
         pthread_mutex_lock(&round_mutex);
@@ -477,6 +498,7 @@ int main(int argc, char **argv) {
     SERVER.clients_per_round = atoi(argv[2]);
     SERVER.accuracies = NULL;
     SERVER.clients = NULL;
+    SERVER.log_len = 0;
 
     printf("INFO: Greetings from server!\n");
 
@@ -589,40 +611,52 @@ int main(int argc, char **argv) {
     int window_height = 900;
     InitWindow(window_width, window_height, "zfl");
 
+    const int panel_font_size = 20;
+    const int panel_start = 10;
+    const int panel_margin = 10;
+    const int panel_element_spacing = 20;
+
     while (!WindowShouldClose()) {
         window_width = GetScreenWidth();
         window_height = GetScreenHeight();
-
-        int panel_start = 10;
-        int panel_margin = 10;
-        int panel_element_spacing = 20;
-
-        int chart_start_x = 0.2 * window_width;
-        int chart_start_y = 0.1 * window_height;
-        int chart_height = 0.5 * window_height;
-        int chart_width = 0.5 * window_width;
-        int chart_padding = 10;
+        int panel_width = 0.4 * window_width;
 
         BeginDrawing();
         ClearBackground(BLACK);
-        DrawText("Welcome to server UI", panel_start, panel_margin, 20,
-                 RAYWHITE);
+
+        BeginScissorMode(0, 0, panel_width, window_height);
+        DrawText("Welcome to server UI", panel_start, panel_margin,
+                 panel_font_size, RAYWHITE);
         char stats[100];
         snprintf(stats, sizeof(stats), "Current Round: %zu",
                  SERVER.current_round.round_number);
-        DrawText(stats, panel_start, panel_start + panel_element_spacing, 20,
-                 RAYWHITE);
+        DrawText(stats, panel_start, panel_start + panel_element_spacing,
+                 panel_font_size, RAYWHITE);
         snprintf(stats, sizeof(stats), "Bytes Transferred: %zu",
                  SERVER.bytes_transferred);
         DrawText(stats, panel_start, panel_start + 2 * panel_element_spacing,
-                 20, RAYWHITE);
+                 panel_font_size, RAYWHITE);
+        DrawText("Logs:", panel_start, panel_start + 4 * panel_element_spacing,
+                 panel_font_size, RAYWHITE);
+        for (int i = SERVER.log_len - 1, j = 1; i >= 0; --i, ++j) {
+            DrawText(SERVER.logs[i], panel_start,
+                     panel_start + (4 + j) * panel_element_spacing,
+                     panel_font_size, RAYWHITE);
+        }
+        EndScissorMode();
 
-        DrawText("Accuracies on test set:", chart_start_x, panel_margin, 20,
-                 RAYWHITE);
+        int chart_margin = 10;
+        int chart_start_x = panel_width + chart_margin;
+        int chart_start_y = chart_margin + panel_font_size;
+        int chart_height = window_height - chart_start_y - panel_font_size;
+        int chart_width = window_width - chart_start_x - chart_margin;
+
+        DrawText("Accuracies on test set:", chart_start_x, panel_margin,
+                 panel_font_size, RAYWHITE);
         DrawLine(chart_start_x, chart_start_y, chart_start_x,
-                 chart_height + chart_padding, RAYWHITE);
-        DrawLine(chart_start_x, chart_height + chart_padding,
-                 chart_start_x + chart_width, chart_height + chart_padding,
+                 chart_height + chart_start_y, RAYWHITE);
+        DrawLine(chart_start_x, chart_height + chart_start_y,
+                 chart_start_x + chart_width, chart_height + chart_start_y,
                  RAYWHITE);
 
         if (SERVER.accuracies) {

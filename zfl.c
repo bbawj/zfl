@@ -165,30 +165,15 @@ int start_client(int num_clients, size_t epochs, size_t batch_size) {
         if (child != 0) {
             process_ids[i] = child;
         } else {
-            // /opt/zephyr-sdk-0.16.1/sysroots/x86_64-pokysdk-linux/usr/bin/qemu-system-i386
-            // -m 50 -cpu qemu32,+nx,+pae -machine q35 -device
-            // isa-debug-exit,iobase=0xf4,iosize=0x04 -no-reboot -nographic
-            // -no-acpi -nic tap,model=e1000,script=no,downscript=no,ifname=zeth
-            // -pidfile qemu${QEMU_INSTANCE}.pid -chardev stdio,id=con,mux=on
-            // -serial chardev:con -mon chardev=con,mode=readline -kernel
-            // /home/bawj/projects/fyp/zephyrproject/zephyr/zfl/zflclient/out/zephyr/zephyr.elf
             int ret =
-                execlp("/opt/zephyr-sdk-0.16.1/sysroots/"
-                       "x86_64-pokysdk-linux/usr/bin/qemu-system-i386",
-                       "/opt/zephyr-sdk-0.16.1/sysroots/"
-                       "x86_64-pokysdk-linux/usr/bin/qemu-system-i386",
+                execlp("qemu-system-i386", "qemu-system-i386",
 
                        "-m", "15", "-cpu", "qemu32,+nx,+pae", "-machine", "q35",
                        "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
 
                        "-no-reboot", "-nographic", "-no-acpi",
-                       // "-pidfile", "qemu${QEMU_INSTANCE}.pid",
-                       // "-chardev", serial_arg,
-                       // "-chardev", "stdio,id=con",
 
                        "-serial", serial_arg,
-
-                       // "-mon", "chardev=con,mode=readline",
 
                        "-nic", nic_arg,
 
