@@ -65,8 +65,9 @@ typedef struct {
     size_t clients_per_round;
     size_t bytes_transferred;
     float *accuracies;
-    char *logs[LOG_LENGTH_MAX];
+    char logs[LOG_LENGTH_MAX][1024];
     size_t log_len;
+    size_t clients_ready;
 
     Client *clients;
     Round current_round;
@@ -89,12 +90,13 @@ void log_append(char *msg, ...) {
         printf("ERROR: failed to append to log because %s\n", strerror(errno));
     }
     va_end(args);
+    printf("%s", buf);
     if (SERVER.log_len == LOG_LENGTH_MAX) {
-        free(SERVER.logs[0]);
-        memmove(&SERVER.logs, &SERVER.logs[1], LOG_LENGTH_MAX - 1);
+        memmove(&SERVER.logs, &SERVER.logs[1],
+                sizeof(SERVER.logs[0]) * (LOG_LENGTH_MAX - 1));
         SERVER.log_len--;
     }
-    SERVER.logs[SERVER.log_len++] = strdup(buf);
+    snprintf(SERVER.logs[SERVER.log_len++], sizeof(SERVER.logs[0]), "%s", buf);
 }
 
 static int sendall(int sock, const char *buf, size_t len) {
@@ -204,14 +206,14 @@ void *handle_results(int id, char *results, size_t len) {
     printf("INFO: Client %d responded with results size %zu\n", id, len);
     Payload p = {0};
     if (deserialize_training_data(results, len, &p) == -1) {
-        printf("ERROR: invalid json response for results\n");
+        log_append("ERROR: invalid json response for results\n");
         goto clean;
     }
     pthread_mutex_lock(&round_mutex);
     if (p.round_number != SERVER.current_round.round_number) {
         pthread_mutex_unlock(&round_mutex);
-        printf("INFO: Client %d responded for round %zu, skipping...\n", id,
-               p.round_number);
+        log_append("INFO: Client %d responded for round %zu, skipping...\n", id,
+                   p.round_number);
         goto clean;
     }
     pthread_mutex_unlock(&round_mutex);
@@ -219,9 +221,9 @@ void *handle_results(int id, char *results, size_t len) {
     pthread_mutex_lock(&result_mutex);
     if (SERVER.current_round.averaging) {
         pthread_mutex_unlock(&result_mutex);
-        printf("INFO: Client %d responded for round %zu but server already "
-               "averaging\n",
-               id, p.round_number);
+        log_append("INFO: Client %d responded for round %zu but server already "
+                   "averaging\n",
+                   id, p.round_number);
         goto clean;
     }
     parse_weights_json(p.weights, SERVER.current_round.weights,
@@ -230,15 +232,14 @@ void *handle_results(int id, char *results, size_t len) {
 
     ++SERVER.current_round.responded;
     // TODO: allow certain fraction of clients to dropoff
-    bool run_averaging =
+    SERVER.current_round.averaging =
         SERVER.current_round.responded == SERVER.current_round.participants;
-    SERVER.current_round.averaging = run_averaging;
     pthread_mutex_unlock(&result_mutex);
 
-    if (run_averaging) {
-        printf("INFO: round %zu all clients responded, starting "
-               "FedAvg\n",
-               SERVER.current_round.round_number);
+    if (SERVER.current_round.averaging) {
+        log_append("INFO: round %zu all clients responded, starting "
+                   "FedAvg\n",
+                   SERVER.current_round.round_number);
         for (size_t i = 0; i < ARCH_COUNT - 1; ++i) {
             for (size_t j = 0; j < ARCH[i]; ++j) {
                 for (size_t k = 0; k < ARCH[i + 1]; ++k) {
@@ -255,11 +256,12 @@ void *handle_results(int id, char *results, size_t len) {
                 SERVER.current_round.biases);
         float acc =
             accuracy(SERVER.current_round.nn, SERVER.current_round.test_set);
-        printf("INFO: final model accuracy against test set is %f\n", acc);
+        log_append("INFO: final model accuracy against test set is %f\n", acc);
         da_put(SERVER.accuracies, acc);
 
         pthread_mutex_lock(&round_mutex);
         SERVER.current_round.started = false;
+        SERVER.current_round.averaging = false;
         pthread_mutex_unlock(&round_mutex);
     }
 clean:
@@ -385,15 +387,15 @@ void *start_round() {
 
         pthread_mutex_lock(&round_mutex);
         if (SERVER.current_round.started) {
-            printf("INFO: round %zu already started nothing to do...\n",
-                   SERVER.current_round.round_number);
+            log_append("INFO: round %zu already started nothing to do...\n",
+                       SERVER.current_round.round_number);
             pthread_mutex_unlock(&round_mutex);
             continue;
         }
         pthread_mutex_unlock(&round_mutex);
 
-        printf("INFO: checking client ready status\n");
-        size_t ready = 0;
+        log_append("INFO: checking client ready status\n");
+        SERVER.clients_ready = 0;
         for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
             Client *c = &SERVER.clients[i];
             int sock = connect_client(c->ipaddr);
@@ -406,10 +408,9 @@ void *start_round() {
                 c->ready = false;
                 goto clean;
             }
-            printf("INFO: Client %s ready: %s\n", c->ipaddr, buf);
             if (strncmp(buf, "true", strlen("true")) == 0) {
                 c->ready = true;
-                ++ready;
+                ++SERVER.clients_ready;
             } else {
                 c->ready = false;
             }
@@ -417,14 +418,14 @@ void *start_round() {
             close(sock);
         }
 
-        if (ready == SERVER.clients_per_round) {
+        if (SERVER.clients_ready == SERVER.clients_per_round) {
             pthread_mutex_lock(&round_mutex);
             SERVER.current_round.started = true;
             pthread_mutex_unlock(&round_mutex);
 
             ++SERVER.current_round.round_number;
-            printf("INFO: %zu clients are ready, starting round %zu\n", ready,
-                   SERVER.current_round.round_number);
+            log_append("INFO: %zu clients are ready, starting round %zu\n",
+                       SERVER.clients_ready, SERVER.current_round.round_number);
             for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
                 Client c = SERVER.clients[i];
                 if (c.ready) {
@@ -440,7 +441,7 @@ void *start_round() {
                     int len = snprintf(
                         req, sizeof(req),
                         "POST /train \r\nContent-Length: %zu\r\n\r\n", sb.size);
-                    printf("INFO: sending req %s\n", req);
+                    printf("INFO: sending POST /train request\n");
                     sendall(sock, req, len);
                     sendall(sock, sb.data, sb.size);
 
@@ -636,11 +637,16 @@ int main(int argc, char **argv) {
                  SERVER.bytes_transferred);
         DrawText(stats, panel_start, panel_start + 2 * panel_element_spacing,
                  panel_font_size, RAYWHITE);
-        DrawText("Logs:", panel_start, panel_start + 4 * panel_element_spacing,
+        snprintf(stats, sizeof(stats), "Clients ready: %zu",
+                 SERVER.clients_ready);
+        DrawText(stats, panel_start, panel_start + 3 * panel_element_spacing,
+                 panel_font_size, RAYWHITE);
+
+        DrawText("Logs:", panel_start, panel_start + 5 * panel_element_spacing,
                  panel_font_size, RAYWHITE);
         for (int i = SERVER.log_len - 1, j = 1; i >= 0; --i, ++j) {
             DrawText(SERVER.logs[i], panel_start,
-                     panel_start + (4 + j) * panel_element_spacing,
+                     panel_start + (5 + j) * panel_element_spacing,
                      panel_font_size, RAYWHITE);
         }
         EndScissorMode();
