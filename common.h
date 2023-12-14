@@ -15,6 +15,7 @@
 typedef struct {
     Token *json;
     size_t round_number;
+    size_t training_time;
     Token *weights;
 } Payload;
 

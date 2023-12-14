@@ -64,6 +64,7 @@ typedef struct {
     size_t num_rounds;
     size_t clients_per_round;
     size_t bytes_transferred;
+    size_t total_training_time;
     float *accuracies;
     char logs[LOG_LENGTH_MAX][1024];
     size_t log_len;
@@ -226,6 +227,9 @@ void *handle_results(int id, char *results, size_t len) {
                    id, p.round_number);
         goto clean;
     }
+
+    SERVER.total_training_time += p.training_time;
+
     parse_weights_json(p.weights, SERVER.current_round.weights,
                        SERVER.current_round.biases,
                        SERVER.current_round.responded != 0);
@@ -641,12 +645,16 @@ int main(int argc, char **argv) {
                  SERVER.clients_ready);
         DrawText(stats, panel_start, panel_start + 3 * panel_element_spacing,
                  panel_font_size, RAYWHITE);
+        snprintf(stats, sizeof(stats), "Total training time: %zu",
+                 SERVER.total_training_time);
+        DrawText(stats, panel_start, panel_start + 4 * panel_element_spacing,
+                 panel_font_size, RAYWHITE);
 
-        DrawText("Logs:", panel_start, panel_start + 5 * panel_element_spacing,
+        DrawText("Logs:", panel_start, panel_start + 6 * panel_element_spacing,
                  panel_font_size, RAYWHITE);
         for (int i = SERVER.log_len - 1, j = 1; i >= 0; --i, ++j) {
             DrawText(SERVER.logs[i], panel_start,
-                     panel_start + (5 + j) * panel_element_spacing,
+                     panel_start + (6 + j) * panel_element_spacing,
                      panel_font_size, RAYWHITE);
         }
         EndScissorMode();

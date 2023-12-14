@@ -107,10 +107,11 @@ int connect_main_server() {
     return serv;
 }
 
-int send_weights(size_t round_number) {
+int send_weights(size_t round_number, int64_t training_time) {
     StringBuilder sb;
     sb_init(&sb, 1024);
-    sb_appendf(&sb, "{\"round\": %zu, \"weights\": ", round_number);
+    sb_appendf(&sb, "{\"training_time\": %ld, \"round\": %zu, \"weights\": ",
+               training_time / 1000, round_number);
     weights_to_string(&sb, &TRAINER.model);
     sb_append(&sb, "}", 1);
     char req[256];
@@ -192,9 +193,11 @@ void handle_incoming_connection(void *sock, void *x, void *y) {
         init_model(p.weights);
 
         LOG_INF("Starting training");
+        int64_t start = k_uptime_get();
         train(&TRAINER);
+        int64_t end = k_uptime_get();
 
-        send_weights(p.round_number);
+        send_weights(p.round_number, end - start);
 
         free_tokens(p.json);
         free(content);
