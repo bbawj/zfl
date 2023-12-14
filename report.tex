@@ -1,0 +1,67 @@
+\documentclass[12pt]{article}
+\title{Emulation Framework for AIoT Federated Learning}
+\author{Brendan Ang Wei Jie}
+\begin{document}
+
+\maketitle
+
+\pagebreak
+\section{Abstract}
+Federated learning allows a fleet of devices to collaborate towards a globally trained machine
+learning model. Research has continued to produce novel federated learning algorithms to tackle
+different issues in FL such as heterogeneity and learning over data from non-identical
+distributions. Performance of these algorithms depend in part on the system parameters used in FL
+such as number of clients and number of passes. Furthermore, a realistic benchmark would require
+one to procure a large fleet of devices. This work seeks to introduce a software emulation framework to
+streamline the process of building a fleet of clients and allow easy testing of FL system
+parameters for configuration of optimal values.
+\pagebreak
+  \section{Acknowledgements}
+\pagebreak
+\tableofcontents
+\pagebreak
+\section{Introduction}
+Federated learning emerged as a method for solving key issues with the standard centralized learning
+approach. Some of these issues are (1) Preserving user data privacy: a centralized training approach involves the need for the central
+machine performing the computation to have full access to all the data. With FL, data never
+leaves each individual client's device. Instead, only the updated weights are shared to form the
+global model.(2) Scalability: FL enables leveraging a network to perform computation in parallel.
+
+However, with the distributed nature of FL comes a few key challenges.
+\begin{itemize}
+  \item Limited computing resources: individual devices may have constraints on memory, limiting the
+    size of the local model it is able to train. Constraints on computing power can also lead to
+    longer training times. This is particularly so for Internet of Things (IoT) devices such as
+    sensors, where their embedded nature leads to a limited size and power.
+  \item Network limitations: communication speed can become the bottleneck for performance as IoT
+    devices rely on unstable wireless communication networks. Furthermore, data constraints can
+    exist such that the number of bytes sent may be a cost inducing factor.
+\end{itemize}
+\subsection{Problem}
+However, prior to effectively deploying FL on resource-constrained mobile devices in large scale, different factors including the convergence rate, energy efficiency and model accuracy should be well studied.
+
+FLSim\cite{} aims to provide a simulation framework for FL by offering users a set of software components
+which can then be mixed and matched to create a simulator for their use case. Developers need only
+define the data, model and metrics reported, and FL system parameters can be altered in a JSON
+configuration file. FLUTE\cite{} adds additional features by allowing users to gain access to cloud based
+compute and data. However, these simulation solutions are consequently hardware-agnostic. Without
+taking into account the specific platforms which FL is performed on, these simulators cannot provide
+insight into whether the system will work in the production environment. Here, this work proposes
+a new emulation framework zfl, which aims to solve this issue by running FL on emulated hardware.
+\subsection{QEMU}
+QEMU\cite{} is an open source machine emulator and virtualizer. It enables system emulation, where it
+provides a virtual model of an entire machine (CPU, memory and emulated devices) to run a guest OS.
+In this mode the CPU may be fully emulated, or it may work with a hypervisor to allow the guest to
+run directly on the host CPU. In zfl, full CPU emulation is used without a hypervisor.
+\subsection{Zephyr OS}
+To emulate the issue of limited computing resources, it is important to make use of system runtimes
+used by those devices. In particular, the type of operating system used will help to ensure that the kernel is
+lightweight and configurable.
+Zephyr OS\cite{} is one such OS. It is based on a small-footprint kernel designed for use on resource-constrained and embedded systems: from simple embedded environmental sensors and LED wearables to sophisticated embedded controllers, smart watches, and IoT wireless applications.
+Furthermore, Zephyr is highly configurable, allowing the user to choose only the specific kernel
+services required, and also delve into lower level memory allocations of the system RAM. In zfl,
+client code will be written to work in the Zephyr OS environment.
+\section{Implementation}
+\section{Experiments}
+\section{Limitations}
+\end{document}
