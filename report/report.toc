@@ -1,0 +1,12 @@
+\contentsline {section}{\numberline {1}Abstract}{2}{}%
+\contentsline {section}{\numberline {2}Acknowledgements}{3}{}%
+\contentsline {section}{\numberline {3}Introduction}{5}{}%
+\contentsline {subsection}{\numberline {3.1}Problem}{5}{}%
+\contentsline {subsection}{\numberline {3.2}QEMU}{6}{}%
+\contentsline {subsection}{\numberline {3.3}Zephyr OS}{6}{}%
+\contentsline {section}{\numberline {4}Implementation}{6}{}%
+\contentsline {subsection}{\numberline {4.1}Client}{8}{}%
+\contentsline {subsection}{\numberline {4.2}Server}{9}{}%
+\contentsline {section}{\numberline {5}Experiments}{9}{}%
+\contentsline {section}{\numberline {6}Limitations}{9}{}%
+\contentsline {subsection}{\numberline {6.1}Obtaining client training data}{9}{}%
