@@ -14,7 +14,7 @@
 // #define NN_BACKPROP_TRADITIONAL
 
 #ifndef NN_ACT
-#define NN_ACT ACT_SIG
+#define NN_ACT ACT_RELU
 #endif // NN_ACT
 
 #ifndef NN_RELU_PARAM
@@ -41,6 +41,7 @@ typedef enum {
     ACT_RELU,
     ACT_TANH,
     ACT_SIN,
+    ACT_SOFTMAX,
 } Act;
 
 float rand_float(void);
@@ -48,6 +49,7 @@ float rand_float(void);
 float sigmoidf(float x);
 float reluf(float x);
 float tanhf(float x);
+float softmax(float x);
 
 // Dispatch to the corresponding activation function
 float actf(float x, Act act);
@@ -101,7 +103,7 @@ Row mat_row(Mat m, size_t row);
 void mat_copy(Mat dst, Mat src);
 void mat_dot(Mat dst, Mat a, Mat b);
 void mat_sum(Mat dst, Mat a);
-void mat_act(Mat m);
+void mat_act(Mat m, Act act);
 void mat_print(Mat m, const char *name, size_t padding);
 void mat_shuffle_rows(Mat m);
 Mat mat_slice(Mat m, size_t from, size_t n);
@@ -154,6 +156,8 @@ float sigmoidf(float x) { return 1.f / (1.f + expf(-x)); }
 
 float reluf(float x) { return x > 0 ? x : x * NN_RELU_PARAM; }
 
+float softmax(float x) { return exp(x); }
+
 float tanhf(float x) {
     float ex = expf(x);
     float enx = expf(-x);
@@ -170,6 +174,8 @@ float actf(float x, Act act) {
         return tanhf(x);
     case ACT_SIN:
         return sinf(x);
+    case ACT_SOFTMAX:
+        return softmax(x);
     }
     NN_ASSERT(0 && "Unreachable");
     return 0.0f;
@@ -185,6 +191,8 @@ float dactf(float y, Act act) {
         return 1 - y * y;
     case ACT_SIN:
         return cosf(asinf(y));
+    case ACT_SOFTMAX:
+        return y;
     }
     NN_ASSERT(0 && "Unreachable");
     return 0.0f;
@@ -206,11 +214,11 @@ void mat_dot(Mat dst, Mat a, Mat b) {
     size_t n = a.cols;
     NN_ASSERT(dst.rows == a.rows);
     NN_ASSERT(dst.cols == b.cols);
+    mat_fill(dst, 0);
 
     for (size_t i = 0; i < dst.rows; ++i) {
-        for (size_t j = 0; j < dst.cols; ++j) {
-            MAT_AT(dst, i, j) = 0;
-            for (size_t k = 0; k < n; ++k) {
+        for (size_t k = 0; k < n; ++k) {
+            for (size_t j = 0; j < dst.cols; ++j) {
                 MAT_AT(dst, i, j) += MAT_AT(a, i, k) * MAT_AT(b, k, j);
             }
         }
@@ -244,10 +252,10 @@ void mat_sum(Mat dst, Mat a) {
     }
 }
 
-void mat_act(Mat m) {
+void mat_act(Mat m, Act act) {
     for (size_t i = 0; i < m.rows; ++i) {
         for (size_t j = 0; j < m.cols; ++j) {
-            MAT_AT(m, i, j) = actf(MAT_AT(m, i, j), NN_ACT);
+            MAT_AT(m, i, j) = actf(MAT_AT(m, i, j), act);
         }
     }
 }
@@ -336,7 +344,32 @@ void nn_forward(NN nn) {
     for (size_t i = 0; i < nn.arch_count - 1; ++i) {
         mat_dot(row_as_mat(nn.as[i + 1]), row_as_mat(nn.as[i]), nn.ws[i]);
         mat_sum(row_as_mat(nn.as[i + 1]), row_as_mat(nn.bs[i]));
-        mat_act(row_as_mat(nn.as[i + 1]));
+        if (i == nn.arch_count - 2) {
+            // mat_act(row_as_mat(nn.as[i + 1]), ACT_SOFTMAX);
+            Mat m = row_as_mat(nn.as[i + 1]);
+            float max = 0.f;
+            float sum = 0.f;
+            for (size_t i = 0; i < m.rows; ++i) {
+                for (size_t j = 0; j < m.cols; ++j) {
+                    if (MAT_AT(m, i, j) > max) {
+                        max = MAT_AT(m, i, j);
+                    }
+                }
+            }
+            for (size_t i = 0; i < m.rows; ++i) {
+                for (size_t j = 0; j < m.cols; ++j) {
+                    MAT_AT(m, i, j) = exp(MAT_AT(m, i, j) - max);
+                    sum += MAT_AT(m, i, j);
+                }
+            }
+            for (size_t i = 0; i < m.rows; ++i) {
+                for (size_t j = 0; j < m.cols; ++j) {
+                    MAT_AT(m, i, j) /= sum;
+                }
+            }
+        } else {
+            mat_act(row_as_mat(nn.as[i + 1]), ACT_RELU);
+        }
     }
 }
 
@@ -354,12 +387,11 @@ float nn_cross_entropy(NN nn, Mat t) {
         nn_forward(nn);
         size_t q = y.cols;
         for (size_t j = 0; j < q; ++j) {
-            float d = logf(ROW_AT(NN_OUTPUT(nn), j)) / logf(2) * ROW_AT(y, j);
-            c += -d;
+            c += logf(ROW_AT(NN_OUTPUT(nn), j));
         }
     }
 
-    return c / n;
+    return -1.f * c / n;
 }
 
 float nn_cost(NN nn, Mat t) {
@@ -409,12 +441,16 @@ NN nn_backprop(Region *r, NN nn, Mat t) {
         }
 
         for (size_t j = 0; j < out.cols; ++j) {
-#ifdef NN_BACKPROP_TRADITIONAL
-            ROW_AT(NN_OUTPUT(g), j) =
-                2 * (ROW_AT(NN_OUTPUT(nn), j) - ROW_AT(out, j));
-#else
-            ROW_AT(NN_OUTPUT(g), j) = ROW_AT(NN_OUTPUT(nn), j) - ROW_AT(out, j);
-#endif // NN_BACKPROP_TRADITIONAL
+            ROW_AT(NN_OUTPUT(g), j) = (ROW_AT(out, j) == 1)
+                                          ? (ROW_AT(NN_OUTPUT(nn), j) - 1) / n
+                                          : ROW_AT(NN_OUTPUT(nn), j) / n;
+            // #ifdef NN_BACKPROP_TRADITIONAL
+            //             ROW_AT(NN_OUTPUT(g), j) =
+            //                 2 * (ROW_AT(NN_OUTPUT(nn), j) - ROW_AT(out, j));
+            // #else
+            //             ROW_AT(NN_OUTPUT(g), j) = ROW_AT(NN_OUTPUT(nn), j) -
+            //             ROW_AT(out, j);
+            // #endif // NN_BACKPROP_TRADITIONAL
         }
 
 #ifdef NN_BACKPROP_TRADITIONAL
@@ -427,7 +463,10 @@ NN nn_backprop(Region *r, NN nn, Mat t) {
             for (size_t j = 0; j < nn.as[l].cols; ++j) {
                 float a = ROW_AT(nn.as[l], j);
                 float da = ROW_AT(g.as[l], j);
+                // float qa = 1.f;
+                // if (l != nn.arch_count - 1) {
                 float qa = dactf(a, NN_ACT);
+                // }
                 ROW_AT(g.bs[l - 1], j) += s * da * qa;
                 for (size_t k = 0; k < nn.as[l - 1].cols; ++k) {
                     // j - weight matrix col
@@ -438,17 +477,6 @@ NN nn_backprop(Region *r, NN nn, Mat t) {
                     ROW_AT(g.as[l - 1], k) += s * da * qa * w;
                 }
             }
-        }
-    }
-
-    for (size_t i = 0; i < g.arch_count - 1; ++i) {
-        for (size_t j = 0; j < g.ws[i].rows; ++j) {
-            for (size_t k = 0; k < g.ws[i].cols; ++k) {
-                MAT_AT(g.ws[i], j, k) /= n;
-            }
-        }
-        for (size_t k = 0; k < g.bs[i].cols; ++k) {
-            ROW_AT(g.bs[i], k) /= n;
         }
     }
 
