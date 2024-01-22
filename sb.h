@@ -2,6 +2,7 @@
 #define SB_H
 
 #include <assert.h>
+#include <errno.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -22,6 +23,7 @@ int sb_append(StringBuilder *sb, const char *data, size_t len);
 int sb_appendf(StringBuilder *sb, const char *format, ...);
 char *sb_string(StringBuilder *sb);
 void sb_free(StringBuilder *sb);
+void sb_open_file(StringBuilder *sb, char *file_path);
 
 #ifdef SB_IMPLEMENTATION
 
@@ -87,6 +89,20 @@ void sb_free(StringBuilder *sb) {
     free(sb->data);
     sb->size = 0;
     sb->cap = 0;
+}
+
+void sb_open_file(StringBuilder *sb, char *file_path) {
+    FILE *f = fopen(file_path, "r");
+    assert(f);
+    char buf[1024];
+    while (!feof(f)) {
+        int ret = fread(buf, sizeof(*buf), sizeof(buf), f);
+        sb_append(sb, buf, ret);
+        if (ferror(f) != 0) {
+            printf("ERROR: failed to read file %s because: %s\n", file_path,
+                   strerror(errno));
+        }
+    }
 }
 
 #endif // SB_IMPLEMENTATION

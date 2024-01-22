@@ -117,8 +117,8 @@ int deserialize_training_data(char *data, size_t size, Payload *p) {
         } else if (strncmp(key->text, weights_key, strlen(weights_key)) == 0) {
             p->weights = key->child->child;
         } else {
-            printf("Invalid key %s\n", key->text);
-            return -1;
+            // printf("Invalid key %s\n", key->text);
+            // return -1;
         }
         key = key->next;
     }
@@ -131,11 +131,9 @@ int parse_weights_json(Token *weights, float **initial_weights,
 
     if (!accum) {
         for (int i = 0; i < ARCH_COUNT - 1; ++i) {
-            initial_weights[i] =
-                calloc(1, sizeof(float) * ARCH[i] * ARCH[i + 1]);
-            assert(initial_weights[i] != NULL);
-            initial_bias[i] = calloc(1, sizeof(float) * ARCH[i + 1]);
-            assert(initial_bias[i] != NULL);
+            memset(initial_weights[i], 0,
+                   sizeof(float) * ARCH[i] * ARCH[i + 1]);
+            memset(initial_bias[i], 0, sizeof(float) * ARCH[i + 1]);
         }
     }
 
