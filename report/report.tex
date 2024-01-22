@@ -1,6 +1,14 @@
 \documentclass[12pt]{article}
 \usepackage{listings}
 \usepackage{xcolor}
+\usepackage{pgf-umlsd}
+\usepackage{hyperref}
+\usepackage{graphicx}
+\graphicspath{ {./} }
+
+\usepackage{tabularx}
+\newcolumntype{b}{X}
+\newcolumntype{s}{>{\hsize=.5\hsize}X}
 
 \definecolor{codegreen}{rgb}{0,0.6,0}
 \definecolor{codegray}{rgb}{0.5,0.5,0.5}
@@ -46,7 +54,9 @@ parameters for configuration of optimal values.
   \section{Acknowledgements}
 \pagebreak
 \tableofcontents
+\listoffigures
 \pagebreak
+
 \section{Introduction}
 Federated learning emerged as a method for solving key issues with the standard centralized learning
 approach. Some of these issues are (1) Preserving user data privacy: a centralized training approach involves the need for the central
@@ -54,7 +64,7 @@ machine performing the computation to have full access to all the data. With FL,
 leaves each individual client's device. Instead, only the updated weights are shared to form the
 global model.(2) Scalability: FL enables leveraging a network to perform computation in parallel.
 \\
-However, with the distributed nature of FL comes a few key challenges.
+The distributed nature of FL poses a few key challenges. Some of these include:
 \begin{itemize}
   \item Limited computing resources: individual devices may have constraints on memory, limiting the
     size of the local model it is able to train. Constraints on computing power can also lead to
@@ -64,8 +74,25 @@ However, with the distributed nature of FL comes a few key challenges.
     devices rely on unstable wireless communication networks. Furthermore, data constraints can
     exist such that the number of bytes sent may be a cost inducing factor.
 \end{itemize}
+
+Hence, development of FL algorithms often seek to advance progress towards solving these
+aforementioned issues.
+
 \subsection{Problem}
-However, prior to effectively deploying FL on resource-constrained mobile devices in large scale, different factors including the convergence rate, energy efficiency and model accuracy should be well studied.
+However, prior to effectively deploying FL, different factors including the convergence rate and
+model accuracy needs to be well studied, giving rise to the need for simulation. In addition, the
+simulation of FL in the distributed setting involves dealing with
+issues which do not arise in datacenter ML research. These include running on different simulated
+devices each with potentially varying amount of data. Furthermore, metrics such as number of bytes uploaded and
+downloaded by the device as well as the ability to simulate real-world issues such as client
+drop-out can also be important for proposed FL algorithms to handle.
+
+\subsection{Literary Review}
+FedML\cite{} is a research-oriented library which supports various algorithms and 3 platforms, on-device training for IoT and
+mobile devices, distributed computing and single-machine simulation. On-device training is supported
+only on Raspberry Pi 4 and NVIDIA Jetson Nano which limits hardware validation to these 2 devices.
+Simulation is offered through the FedML Parrot\cite{}, which offers an accelerated simulation
+framework employing multiple optimizations to improve simulation speed.
 
 FLSim\cite{} aims to provide a simulation framework for FL by offering users a set of software components
 which can then be mixed and matched to create a simulator for their use case. Developers need only
@@ -73,8 +100,15 @@ define the data, model and metrics reported, and FL system parameters can be alt
 configuration file. FLUTE\cite{} adds additional features by allowing users to gain access to cloud based
 compute and data. However, these simulation solutions are consequently hardware-agnostic. Without
 taking into account the specific platforms which FL is performed on, these simulators cannot provide
-insight into whether the system will work in the production environment. Here, this work proposes
-a new emulation framework zfl, which aims to solve this issue by running FL on emulated hardware.
+insight into whether the system will work in the production environment.
+
+Here, this work proposes a new emulation framework zfl, which aims to achieve the following
+properties:
+\begin{itemize}
+  \item Provide better insight into platform specific support by running FL on emulated hardware.
+  \item Collect useful metrics during the FL lifecycle.
+  \item Support implementation of real word issues such as variable data and client drop-off.
+\end{itemize}
 
 \subsection{QEMU}
 QEMU\cite{} is an open source machine emulator and virtualizer. It enables system emulation, where it
@@ -162,7 +196,6 @@ execlp("qemu-system-i386", "qemu-system-i386",
        NULL);
 \end{lstlisting}
 
-\subsection{Client}
 In addition to the MAC address configuration, each client needed a unique Internet Protocol Version
 4 (IPv4) address in order to establish TCP based connections with the central server. Samples
 provided by Zephyr OS describe a way to achieve this my setting a compile time configuration flag
@@ -173,11 +206,14 @@ dynamically using the built-in Zephyr network function:
 net_if_ipv4_addr_add
 \end{verbatim}
 To achieve this, each client starts off as a Zephyr shell instance and a user-defined command is registered as a way to start the main program.
-The desired IP address is obtained as a command line argument.
+The desired IP address is obtained using the command line argument in listing \ref{lst:shellcmd}.
 
-\begin{lstlisting}[language=C, caption=Registering user defined command "run" to the function pointer run]
+\begin{lstlisting}[language=C, caption=Registering user defined command "run" to the function
+pointer run,label={lst:shellcmd}]
 SHELL_CMD_ARG_REGISTER(run, NULL, "Run with IPv4 address", run, 4, 0);
 \end{lstlisting}
+
+The complete architecture is illustrated in figure \ref{fig:architecture}.
 
 \begin{lstlisting}[language=C, caption=the "run" function which performs IP address assignment at runtime]
     char *addr_str = argv[1];
@@ -190,19 +226,88 @@ SHELL_CMD_ARG_REGISTER(run, NULL, "Run with IPv4 address", run, 4, 0);
     }
 \end{lstlisting}
 
-Finally, each client establishes TCP socket connection to the central server and obtains
+\begin{figure}
+  \includegraphics[scale=0.8]{architecture}
+  \caption{Host-guest emulation architecture}
+  \label{fig:architecture}
+\centering
+\end{figure}
+
+\subsection{Client}
+Each client establishes TCP socket connection to the central server and obtains
 their assigned ID and training data according to that ID. Once done, each client
-marks itself as ready to begin the training round. The complete initialization process is
-illustrated below:
+starts a HTTP server and marks itself as ready to begin the training round. The complete initialization process is
+illustrated in figure \ref{fig:clientinit}.
+
+\begin{figure}]
+  \centering
+  \begin{sequencediagram}
+    \newthread{A}{Client}{}
+    \newinst[1]{B}{Server}{}
+    \begin{call}{A}{getId()}{B}{id}
+    \end{call}
+    \begin{call}{A}{getTrainingData(id)}{B}{data}
+    \end{call}
+    \begin{call}{A}{self.ready = true}{A}{}
+    \end{call}
+  \end{sequencediagram}
+  \caption{Client initialization sequence}
+  \label{fig:clientinit}
+\end{figure}
 
 \subsection{Server}
-The central server runs on the host machine without needing additional initialization. After
-assigning each connecting client their ID and training data, it performs the function
+The central server runs on the host machine without needing additional configuration. Its primary
+purpose is to serve as a HTTP server. Implemented endpoints are described in figure
+\ref{fig:httpendpoints}. After assigning each connecting client their ID and training data, it performs the function
 \verb|start_round| at an interval of 10 seconds. Each time, the server pings all previously
 connected clients to check if they are ready to start the training round. When enough clients are
-ready, it sends a HTTP request to the start endpoint of the client, which triggers the training
-function.
+ready, it sends a HTTP post request to the \verb|train| endpoint of the client, which triggers the training
+function. Once the client has completed training, it sends the resulting weights of the local model
+to the HTTP POST endpoint \verb|results| of the server, who then performs the aggregation. The
+sequence of events for a single round is illustrated in figure \ref{}.
+
+\begin{figure}
+\begin{tabularx}{\textwidth} {
+  | >{\raggedright\arraybackslash}s
+  | >{\centering\arraybackslash}s
+  | >{\raggedright\arraybackslash}b | }
+ \hline
+ \multicolumn{3}{|c|}{Client} \\
+ \hline
+ Endpoint & HTTP Method & Description \\
+ \hline
+ /start & POST & Initiates training round using updated weights with JSON body: \newline\{weights: int\}  \\
+ \hline
+ /ready & GET & Gets client ready status \\
+ \hline
+ \multicolumn{3}{|c|}{Server} \\
+ \hline
+ /results?id= & POST & Client id submits results with JSON body: \newline\{round: int, weights: string\}  \\
+ \hline
+ /id & GET & Obtain an id for round participation \\
+ \hline
+ /training-data?id= & GET & Obtain training data for id \\
+ \hline
+ /training-labels?id= & GET & Obtain training labels for id \\
+ \hline
+\end{tabularx}
+\caption{HTTP endpoints}
+\label{fig:httpendpoints}
+\end{figure}
+
 \section{Experiments}
+The framework is tested using FedAvg over the MNIST digit recognition data set. Due to memory
+constraints, clients are configured with a neural network architecture with 1 hidden layer of 16
+nodes. The underlying neural network implementation utilizes nn.h\cite{}, an open source educational neural network C
+library. Additionally, implementations for the softmax activiation and cross entropy were made to
+make it suitable for machine learning with MNIST categorical data.
+
 \section{Limitations}
-\subsection{Obtaining client training data}
+\subsection{Long training times}\
+Unoptimized client training implementations has resulted in long training times required per FL
+round. This is because we were unable to find standard implementations for machine learning
+algorithms that can be easily ported for use in the Zephyr OS. Zephyr OS provides external modules
+for supporting Tensorflow Lite Micro\cite{} and has examples for running pre-trained neural network
+on their platform. However, on-device training is not supported\cite{}.
+
 \end{document}
