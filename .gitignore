@@ -2,6 +2,7 @@ zfl
 zflserver/server
 /**/out
 data/*
+tools/data
 
 ## Core latex/pdflatex auxiliary files:
 *.aux
