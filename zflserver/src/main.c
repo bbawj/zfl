@@ -66,6 +66,7 @@ typedef struct {
     size_t bytes_transferred;
     size_t total_training_time;
     float *accuracies;
+    float *loss;
     char logs[LOG_LENGTH_MAX][1024];
     size_t log_len;
     size_t clients_ready;
@@ -82,7 +83,13 @@ void increment_bytes_transferred(size_t bytes) {
     pthread_mutex_unlock(&bytes_transferred_mutex);
 }
 
-void log_append(char *msg, ...) {
+#define CURRENT_LOG_LEVEL 1
+
+typedef enum { DEBUG = 0, INFO, ERROR } LOG_LEVEL;
+
+void log_append(LOG_LEVEL level, char *msg, ...) {
+    if (CURRENT_LOG_LEVEL > level)
+        return;
     char buf[1024];
     va_list args;
     va_start(args, msg);
@@ -207,14 +214,14 @@ void *handle_results(int id, char *results, size_t len) {
     printf("INFO: Client %d responded with results size %zu\n", id, len);
     Payload p = {0};
     if (deserialize_training_data(results, len, &p) == -1) {
-        log_append("ERROR: invalid json response for results\n");
+        log_append(ERROR, "invalid json response for results\n");
         goto clean;
     }
     pthread_mutex_lock(&round_mutex);
     if (p.round_number != SERVER.current_round.round_number) {
         pthread_mutex_unlock(&round_mutex);
-        log_append("INFO: Client %d responded for round %zu, skipping...\n", id,
-                   p.round_number);
+        log_append(DEBUG, "Client %d responded for round %zu, skipping...\n",
+                   id, p.round_number);
         goto clean;
     }
     pthread_mutex_unlock(&round_mutex);
@@ -222,7 +229,8 @@ void *handle_results(int id, char *results, size_t len) {
     pthread_mutex_lock(&result_mutex);
     if (SERVER.current_round.averaging) {
         pthread_mutex_unlock(&result_mutex);
-        log_append("INFO: Client %d responded for round %zu but server already "
+        log_append(DEBUG,
+                   "INFO: Client %d responded for round %zu but server already "
                    "averaging\n",
                    id, p.round_number);
         goto clean;
@@ -241,7 +249,8 @@ void *handle_results(int id, char *results, size_t len) {
     pthread_mutex_unlock(&result_mutex);
 
     if (SERVER.current_round.averaging) {
-        log_append("INFO: round %zu all clients responded, starting "
+        log_append(INFO,
+                   "INFO: round %zu all clients responded, starting "
                    "FedAvg\n",
                    SERVER.current_round.round_number);
         for (size_t i = 0; i < ARCH_COUNT - 1; ++i) {
@@ -260,8 +269,14 @@ void *handle_results(int id, char *results, size_t len) {
                 SERVER.current_round.biases);
         float acc =
             accuracy(SERVER.current_round.nn, SERVER.current_round.test_set);
-        log_append("INFO: final model accuracy against test set is %f\n", acc);
+        float loss = nn_cross_entropy(SERVER.current_round.nn,
+                                      SERVER.current_round.test_set);
+        log_append(
+            INFO,
+            "INFO: Final Model. Accuracy against test set: %f, Loss: %f\n", acc,
+            loss);
         da_put(SERVER.accuracies, acc);
+        da_put(SERVER.loss, loss);
 
         pthread_mutex_lock(&round_mutex);
         SERVER.current_round.started = false;
@@ -382,23 +397,29 @@ void *start_round() {
     int delay = 10;
     while (1) {
         if (SERVER.current_round.round_number == SERVER.num_rounds) {
-            printf("INFO: all %zu rounds completed. Stopping...\n",
+            printf("INFO: all %zu rounds completed. Final accuracies:\n",
                    SERVER.current_round.round_number);
+            for (size_t i = 0; i < da_len(SERVER.accuracies); ++i) {
+                printf("Round %lu. Accuracy: %f. Loss: %f\n", i + 1,
+                       SERVER.accuracies[i], SERVER.loss[i]);
+            }
             break;
         }
-        log_append("INFO: waiting for %d seconds before starting...\n", delay);
+        log_append(INFO, "INFO: waiting for %d seconds before starting...\n",
+                   delay);
         sleep(delay);
 
         pthread_mutex_lock(&round_mutex);
         if (SERVER.current_round.started) {
-            log_append("INFO: round %zu already started nothing to do...\n",
+            log_append(DEBUG,
+                       "INFO: round %zu already started nothing to do...\n",
                        SERVER.current_round.round_number);
             pthread_mutex_unlock(&round_mutex);
             continue;
         }
         pthread_mutex_unlock(&round_mutex);
 
-        log_append("INFO: checking client ready status\n");
+        log_append(DEBUG, "INFO: checking client ready status\n");
         SERVER.clients_ready = 0;
         for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
             Client *c = &SERVER.clients[i];
@@ -428,7 +449,8 @@ void *start_round() {
             pthread_mutex_unlock(&round_mutex);
 
             ++SERVER.current_round.round_number;
-            log_append("INFO: %zu clients are ready, starting round %zu\n",
+            log_append(INFO,
+                       "INFO: %zu clients are ready, starting round %zu\n",
                        SERVER.clients_ready, SERVER.current_round.round_number);
             for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
                 Client c = SERVER.clients[i];
@@ -547,8 +569,9 @@ int main(int argc, char **argv) {
     SERVER.current_round.biases = malloc(sizeof(float *) * (ARCH_COUNT - 1));
     assert(SERVER.current_round.biases);
     for (int i = 0; i < ARCH_COUNT - 1; ++i) {
-        SERVER.current_round.weights[i] = NULL;
-        SERVER.current_round.biases[i] = NULL;
+        SERVER.current_round.weights[i] =
+            malloc(sizeof(float) * ARCH[i] * ARCH[i + 1]);
+        SERVER.current_round.biases[i] = malloc(sizeof(float) * ARCH[i + 1]);
     }
 
     // TODO: add optional arg for intial model file
@@ -569,6 +592,7 @@ int main(int argc, char **argv) {
     //                    false);
     // init_nn(&SERVER.current_round.nn, CURRENT_ROUND.weights,
     // CURRENT_ROUND.biases);
+    srand(time(NULL));
     init_nn(&SERVER.current_round.nn, NULL, NULL);
 
     int *sock = malloc(sizeof(int));

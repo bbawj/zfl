@@ -6,6 +6,11 @@ LOG_MODULE_REGISTER(zflclient, LOG_LEVEL_DBG);
 #include <zephyr/net/socket.h>
 #include <zephyr/shell/shell.h>
 
+#define NN_IMPLEMENTATION
+#define CSON_IMPLEMENTATION
+#define SB_IMPLEMENTATION
+#define COMMON_IMPLEMENTATION
+#define TRAIN_IMPLEMENTATION
 #include "../../common.h"
 #include "../../http.h"
 #include "train.h"
@@ -68,6 +73,10 @@ int init_model(Token *weights) {
     assert(initial_weights);
     float **initial_bias = malloc(sizeof(float *) * (ARCH_COUNT - 1));
     assert(initial_bias);
+    for (int i = 0; i < ARCH_COUNT - 1; ++i) {
+        initial_weights[i] = malloc(sizeof(float) * ARCH[i] * ARCH[i + 1]);
+        initial_bias[i] = malloc(sizeof(float) * ARCH[i + 1]);
+    }
     LOG_INF("Parsing json");
     parse_weights_json(weights, initial_weights, initial_bias, false);
     LOG_INF("Initing nn");
@@ -107,11 +116,10 @@ int connect_main_server() {
     return serv;
 }
 
-int send_weights(size_t round_number, int64_t training_time) {
+int send_weights(size_t round_number) {
     StringBuilder sb;
     sb_init(&sb, 1024);
-    sb_appendf(&sb, "{\"training_time\": %ld, \"round\": %zu, \"weights\": ",
-               training_time / 1000, round_number);
+    sb_appendf(&sb, "{\"round\": %zu, \"weights\": ", round_number);
     weights_to_string(&sb, &TRAINER.model);
     sb_append(&sb, "}", 1);
     char req[256];
@@ -197,7 +205,7 @@ void handle_incoming_connection(void *sock, void *x, void *y) {
         train(&TRAINER);
         int64_t end = k_uptime_get();
 
-        send_weights(p.round_number, end - start);
+        send_weights(p.round_number);
 
         free_tokens(p.json);
         free(content);
