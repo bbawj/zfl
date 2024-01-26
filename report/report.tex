@@ -1,4 +1,8 @@
 \documentclass[12pt]{article}
+\usepackage{geometry}
+\geometry{a4paper, lmargin=35mm,rmargin=30mm,tmargin=30mm,bmargin=30mm}
+\usepackage{setspace}
+\onehalfspacing
 \usepackage{listings}
 \usepackage{xcolor}
 \usepackage{pgf-umlsd}
@@ -42,28 +46,34 @@
 
 \pagebreak
 \section{Abstract}
-Federated learning allows a fleet of devices to collaborate towards a globally trained machine
-learning model. Research has continued to produce novel federated learning algorithms to tackle
-different issues in FL such as heterogeneity and learning over data from non-identical
-distributions. Performance of these algorithms depend in part on the system parameters used in FL
-such as number of clients and number of passes. Furthermore, a realistic benchmark would require
-one to procure a large fleet of devices. This work seeks to introduce a software emulation framework to
-streamline the process of building a fleet of clients and allow easy testing of FL system
-parameters for configuration of optimal values.
+Federated Learning (FL) allows a fleet of devices to collaborate towards a globally trained machine
+learning model. Research has continued to produce novel algorithms to tackle
+different issues in FL such as data heterogeneity and network costs. The performance
+of these algorithms depend in part on the system parameters used
+such as the number of clients participating in each round as well as real world factors such as
+client drop off. However, measuring this performance through a realistic benchmark would require
+one to procure a large fleet of devices which is infeasible and costly. Therefore, the role of
+software simulation is to support researchers with the tools to do so. This work introduces a
+software emulation framework utilizing QEMU and the Zephyr OS to
+streamline the process of building a fleet of clients and allow validation testing of FL system
+parameters that is not hardware-agnostic.
 \pagebreak
   \section{Acknowledgements}
+  I would like to thank Associate Prof Tan Rui, who provided me with this unique opportunity to work
+  on such an interesting problem and guiding me throughout the entire journey with new and
+  refreshing ideas. Special thanks goes to my
+  partner for her unwavering support and critical role as my proofreader.
 \pagebreak
 \tableofcontents
 \listoffigures
 \pagebreak
 
 \section{Introduction}
-Federated learning emerged as a method for solving key issues with the standard centralized learning
+Federated Learning (FL) emerged as a method for solving key issues with the standard centralized learning
 approach. Some of these issues are (1) Preserving user data privacy: a centralized training approach involves the need for the central
 machine performing the computation to have full access to all the data. With FL, data never
 leaves each individual client's device. Instead, only the updated weights are shared to form the
-global model.(2) Scalability: FL enables leveraging a network to perform computation in parallel.
-\\
+global model.(2) Scalability: FL enables leveraging a network to perform computation in parallel.\\
 The distributed nature of FL poses a few key challenges. Some of these include:
 \begin{itemize}
   \item Limited computing resources: individual devices may have constraints on memory, limiting the
@@ -88,19 +98,19 @@ downloaded by the device as well as the ability to simulate real-world issues su
 drop-out can also be important for proposed FL algorithms to handle.
 
 \subsection{Literary Review}
-FedML\cite{} is a research-oriented library which supports various algorithms and 3 platforms, on-device training for IoT and
+FedML\cite{he_2020_fedml} is a research-oriented library which supports various algorithms and 3 platforms, on-device training for IoT and
 mobile devices, distributed computing and single-machine simulation. On-device training is supported
 only on Raspberry Pi 4 and NVIDIA Jetson Nano which limits hardware validation to these 2 devices.
-Simulation is offered through the FedML Parrot\cite{}, which offers an accelerated simulation
-framework employing multiple optimizations to improve simulation speed.
+Simulation is offered through the FedML Parrot\cite{tang_2023_fedml}, which offers an accelerated simulation
+framework employing multiple optimizations to improve simulation speed.\\
 
-FLSim\cite{} aims to provide a simulation framework for FL by offering users a set of software components
+FLSim\cite{li_2021_flsim} aims to provide a simulation framework for FL by offering users a set of software components
 which can then be mixed and matched to create a simulator for their use case. Developers need only
 define the data, model and metrics reported, and FL system parameters can be altered in a JSON
-configuration file. FLUTE\cite{} adds additional features by allowing users to gain access to cloud based
+configuration file. FLUTE\cite{garcia_2022_flute} adds additional features by allowing users to gain access to cloud based
 compute and data. However, these simulation solutions are consequently hardware-agnostic. Without
 taking into account the specific platforms which FL is performed on, these simulators cannot provide
-insight into whether the system will work in the production environment.
+insight into whether the system will work in the production environment.\\
 
 Here, this work proposes a new emulation framework zfl, which aims to achieve the following
 properties:
@@ -111,7 +121,7 @@ properties:
 \end{itemize}
 
 \subsection{QEMU}
-QEMU\cite{} is an open source machine emulator and virtualizer. It enables system emulation, where it
+QEMU\cite{qemu} is an open source machine emulator and virtualizer. It enables system emulation, where it
 provides a virtual model of an entire machine (CPU, memory and emulated devices) to run a guest OS.
 In this mode the CPU may be fully emulated, or it may work with a hypervisor to allow the guest to
 run directly on the host CPU. In zfl, QEMU with full CPU emulation is used without a hypervisor as
@@ -119,23 +129,34 @@ part of its software architecture to emulate hardware.
 
 \subsection{Zephyr OS}
 To emulate the issue of limited computing resources, it is important to make use of system runtimes
-used by those devices. In particular, the type of operating system used will help to ensure that the kernel is
-lightweight and configurable.
-Zephyr OS\cite{} is one such OS. It is based on a small-footprint kernel designed for use on resource-constrained and embedded systems: from simple embedded environmental sensors and LED wearables to sophisticated embedded controllers, smart watches, and IoT wireless applications.
+used by those devices. Zephyr OS\cite{zephyr} is one such operating system. It is based on a small-footprint kernel designed for use on resource-constrained
+and embedded systems: from simple embedded environmental sensors and LED wearables to sophisticated embedded controllers, smart watches, and IoT wireless applications.
 Furthermore, Zephyr is highly configurable, allowing the user to choose only the specific kernel
-services required, and also delve into lower level memory allocations of the system RAM. In zfl,
+services required, and also delve into lower level memory mapping of the system SRAM and DRAM. Most
+importantly, Zephyr supports a wide range of CPU architectures including ARM, RISC-V and x86.
+Zephyr also provides built-in capabilities for building for the QEMU environment, and implements key
+features such as networking through the QEMU built-in Ethernet adapter. In zfl,
 client code will be written to work in the Zephyr OS environment.
 
 \section{Implementation}
-zfl aims to provide the ability to emulate the traditional FedAvg\cite{} algorithm, with multiple
-clients communicating with a central server which performs the aggregation. To run on Zephyr OS, the entire software stack is developed in the C programming language. This also
-makes it suitable to run on embedded devices.\\
+To run on Zephyr OS, the entire software stack is developed in the C programming language. Although
+Zephyr also supports applications written C++, the C programming language would make the framework
+more suitable to run on embedded devices. \\
 
+The main zfl binary is used to bootstrap either the client or server aspects of FL simulation.
+Listing \ref{lst:bootstrap} shows the different options available for configuring FL parameters.
+\begin{lstlisting}[language=bash,caption={The main zfl binary},label={lst:bootstrap}]
+./zfl client <num_clients> <epochs> <batch_size>
+
+./zfl server <num_rounds> <clients_per_round>
+\end{lstlisting}
+
+\subsection{Bootstrapping Process}
 Next the framework needed a method for spawning an arbitrary number of QEMU instances, and allowing
 these instances to communicate back to the server. When called in client mode, zfl accomplishes this
-by making use of the `fork` and `exec` pattern with the desired number of clients. \\
+by making use of the `fork` and `exec` pattern with the desired number of clients shown in listing \ref{lst:fork}. \\
 
-However, each instance of QEMU is persists in an isolated network different from the host PC,
+However, each instance of QEMU persists in an isolated network different from the host PC,
 and is not able to communicate. We can bypass this limitation using a network bridge to act as a
 virtual network device forwarding packets between connected network devices.
 The network bridge is set up on the host under the name zfl with a set of network parameters using
@@ -157,12 +178,14 @@ Although each QEMU client is now able to communicate with the host via the nic a
 needed a way to monitor the output of each instance. One method is to transmit
 output and logs over the network. However, this would not allow important crash logs and stacktrace
 information to be transmitted as the application software would have shutdown. To overcome this, the host
-creates a named or FIFO pipe \cite{} for each client which is passed in to
+creates a named or FIFO pipe for each client which is passed in to
 QEMU through the -serial flag. Now, all standard output goes through the named pipe, ready to be read
 by the host. Another outcome of this is that the host is now also able to send input to each
-instance, whose importance will be described in the next section.
+instance, whose importance will be described in the next section. Listing \ref{lst:fork} showcases
+how each feature configured through the QEMU command line binary. Note that by default, the Zephyr
+image is built for QEMU x86 32-bit, hence, qemu-i386 is used.
 
-\begin{lstlisting}[language=C,caption=Client forking process]
+\begin{lstlisting}[language=C,caption=Client forking process,label={lst:fork}]
 pid_t child = fork();
 if (child < 0) {
     printf("ERROR: could not fork client %d: %s\n", i, strerror(errno));
@@ -198,7 +221,7 @@ execlp("qemu-system-i386", "qemu-system-i386",
 
 In addition to the MAC address configuration, each client needed a unique Internet Protocol Version
 4 (IPv4) address in order to establish TCP based connections with the central server. Samples
-provided by Zephyr OS describe a way to achieve this my setting a compile time configuration flag
+provided by Zephyr OS describe a way to achieve this my setting a compile time configuration flag\\
 \verb|CONFIG_NET_CONFIG_MY_IPV4_ADDR|. However, this is impractical to scale to a number of clients, since
 each client would need a separately compiled binary. Instead, we can assign the IPv4 address
 dynamically using the built-in Zephyr network function:
@@ -207,13 +230,12 @@ net_if_ipv4_addr_add
 \end{verbatim}
 To achieve this, each client starts off as a Zephyr shell instance and a user-defined command is registered as a way to start the main program.
 The desired IP address is obtained using the command line argument in listing \ref{lst:shellcmd}.
+The complete architecture is illustrated in figure \ref{fig:architecture}.
 
 \begin{lstlisting}[language=C, caption=Registering user defined command "run" to the function
 pointer run,label={lst:shellcmd}]
 SHELL_CMD_ARG_REGISTER(run, NULL, "Run with IPv4 address", run, 4, 0);
 \end{lstlisting}
-
-The complete architecture is illustrated in figure \ref{fig:architecture}.
 
 \begin{lstlisting}[language=C, caption=the "run" function which performs IP address assignment at runtime]
     char *addr_str = argv[1];
@@ -238,15 +260,19 @@ Each client establishes TCP socket connection to the central server and obtains
 their assigned ID and training data according to that ID. Once done, each client
 starts a HTTP server and marks itself as ready to begin the training round. The complete initialization process is
 illustrated in figure \ref{fig:clientinit}.
+\subsubsection{Machine Learning}
+zfl implements the FedAvg algorithm\cite{brendan_2016_communicationefficient}. The underlying neural network implementation utilizes nn.h\cite{_2024_tsodingnnh},
+an open source educational neural network C library, modified for specific use described in the
+section on experiments.
 
-\begin{figure}]
+\begin{figure}
   \centering
   \begin{sequencediagram}
-    \newthread{A}{Client}{}
-    \newinst[1]{B}{Server}{}
-    \begin{call}{A}{getId()}{B}{id}
+    \newinst{A}{Client}{}
+    \newinst[2]{B}{Server}{}
+    \begin{call}{A}{/id}{B}{id}
     \end{call}
-    \begin{call}{A}{getTrainingData(id)}{B}{data}
+    \begin{call}{A}{/training-data-i}{B}{data}
     \end{call}
     \begin{call}{A}{self.ready = true}{A}{}
     \end{call}
@@ -257,14 +283,36 @@ illustrated in figure \ref{fig:clientinit}.
 
 \subsection{Server}
 The central server runs on the host machine without needing additional configuration. Its primary
-purpose is to serve as a HTTP server. Implemented endpoints are described in figure
+purpose is to aggregate individual client weights every round. Implemented HTTP endpoints are described in figure
 \ref{fig:httpendpoints}. After assigning each connecting client their ID and training data, it performs the function
 \verb|start_round| at an interval of 10 seconds. Each time, the server pings all previously
 connected clients to check if they are ready to start the training round. When enough clients are
-ready, it sends a HTTP post request to the \verb|train| endpoint of the client, which triggers the training
+ready, it sends a HTTP POST request to the \verb|train| endpoint of the client, which triggers the training
 function. Once the client has completed training, it sends the resulting weights of the local model
 to the HTTP POST endpoint \verb|results| of the server, who then performs the aggregation. The
-sequence of events for a single round is illustrated in figure \ref{}.
+sequence of events for a single round is illustrated in figure \ref{fig:flround}.
+
+\subsubsection{Metrics}
+During the entire FL lifecycle, the server keeps track of the total number of bytes sent and
+received between the clients and itself. This is displayed along with the additional details such as
+the current round, number of ready clients as well as a graph of the validation set loss and
+accuracy on a simple graphical user interface shown in figure \ref{fig:gui}.
+
+\begin{figure}
+  \centering
+  \begin{sequencediagram}
+    \newinst[1]{A}{Client i}{}
+    \newinst[2]{B}{Server}{}
+    \begin{call}{B}{/ready}{A}{true}
+    \end{call}
+    \begin{messcall}{B}{/start}{A}{}
+    \end{messcall}
+    \begin{messcall}{A}{/results}{B}{}
+    \end{messcall}
+  \end{sequencediagram}
+  \caption{FL round}
+  \label{fig:flround}
+\end{figure}
 
 \begin{figure}
 \begin{tabularx}{\textwidth} {
@@ -295,19 +343,46 @@ sequence of events for a single round is illustrated in figure \ref{}.
 \label{fig:httpendpoints}
 \end{figure}
 
+\begin{figure}
+  \includegraphics[scale=0.2]{gui}
+  \caption{GUI Implementation}
+  \label{fig:gui}
+\centering
+\end{figure}
+
 \section{Experiments}
-The framework is tested using FedAvg over the MNIST digit recognition data set. Due to memory
+The framework is tested using FedAvg over the MNIST digit recognition data set of 60000 labels. Due to memory
 constraints, clients are configured with a neural network architecture with 1 hidden layer of 16
-nodes. The underlying neural network implementation utilizes nn.h\cite{}, an open source educational neural network C
-library. Additionally, implementations for the softmax activiation and cross entropy were made to
+nodes. Additionally, implementations for the softmax activiation and cross entropy were made to
 make it suitable for machine learning with MNIST categorical data.
+
+To test the sanity of the framework, the server was started for 20 rounds and 100 clients per round,
+and clients were started with 5 epochs and a batch size of 600. The validation set loss was recorded
+at the end of each round and the results are show in figure \ref{fig:loss}.
+
+\begin{figure}
+  \includegraphics[scale=0.5]{loss}
+  \caption{20 Round Validation Set Loss}
+  \label{fig:loss}
+\centering
+\end{figure}
 
 \section{Limitations}
 \subsection{Long training times}\
 Unoptimized client training implementations has resulted in long training times required per FL
 round. This is because we were unable to find standard implementations for machine learning
-algorithms that can be easily ported for use in the Zephyr OS. Zephyr OS provides external modules
-for supporting Tensorflow Lite Micro\cite{} and has examples for running pre-trained neural network
-on their platform. However, on-device training is not supported\cite{}.
+algorithms that can be easily ported for use in Zephyr OS. For example, Zephyr OS provides external modules
+for supporting Tensorflow Lite Micro\cite{tensorflow2015-whitepaper} and has examples for running pre-trained neural network
+on their platform, however, on-device training is not supported.
+
+\subsection{Limited algorithm support}
+zfl currently only implements training algorithms for FedAvg. The architecture of zfl also
+inherently assumes the use of a single server instance used for aggregation. However, this
+limitation can be bypassed by porting functions on server such as the implementation of the
+\verb|results| endpoint, moving aggregation into the client. This would support
+hierarchical FL algorithms.
+
+\bibliographystyle{IEEEtran} % We choose the "plain" reference style
+\bibliography{refs} % Entries are in the refs.bib file
 
 \end{document}
