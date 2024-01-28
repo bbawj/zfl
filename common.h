@@ -15,7 +15,7 @@
 typedef struct {
     Token *json;
     size_t round_number;
-    size_t training_time;
+    int64_t training_time;
     Token *weights;
 } Payload;
 
@@ -105,6 +105,7 @@ int deserialize_training_data(char *data, size_t size, Payload *p) {
     Token *key = p->json->next;
     const char round_key[] = "round";
     const char weights_key[] = "weights";
+    const char time_key[] = "training_time";
     size_t round_number = 0;
     while (key != NULL) {
         if (strncmp(key->text, round_key, strlen(round_key)) == 0) {
@@ -116,6 +117,8 @@ int deserialize_training_data(char *data, size_t size, Payload *p) {
             p->round_number = round_number;
         } else if (strncmp(key->text, weights_key, strlen(weights_key)) == 0) {
             p->weights = key->child->child;
+        } else if (strncmp(key->text, time_key, strlen(time_key)) == 0) {
+            p->training_time = strtoll(key->child->text, NULL, 10);
         } else {
             // printf("Invalid key %s\n", key->text);
             // return -1;

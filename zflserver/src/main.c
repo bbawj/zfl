@@ -396,7 +396,7 @@ clean:
 void *start_round() {
     int delay = 10;
     while (1) {
-        if (SERVER.current_round.round_number == SERVER.num_rounds) {
+        if (SERVER.current_round.round_number > SERVER.num_rounds) {
             printf("INFO: all %zu rounds completed. Final accuracies:\n",
                    SERVER.current_round.round_number);
             for (size_t i = 0; i < da_len(SERVER.accuracies); ++i) {
@@ -419,7 +419,7 @@ void *start_round() {
         }
         pthread_mutex_unlock(&round_mutex);
 
-        log_append(DEBUG, "INFO: checking client ready status\n");
+        log_append(DEBUG, "DEBUG: checking client ready status\n");
         SERVER.clients_ready = 0;
         for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
             Client *c = &SERVER.clients[i];
@@ -689,8 +689,8 @@ int main(int argc, char **argv) {
         int chart_height = window_height - chart_start_y - panel_font_size;
         int chart_width = window_width - chart_start_x - chart_margin;
 
-        DrawText("Accuracies on test set:", chart_start_x, panel_margin,
-                 panel_font_size, RAYWHITE);
+        DrawText("Accuracies / Loss on validation set:", chart_start_x,
+                 panel_margin, panel_font_size, RAYWHITE);
         DrawLine(chart_start_x, chart_start_y, chart_start_x,
                  chart_height + chart_start_y, RAYWHITE);
         DrawLine(chart_start_x, chart_height + chart_start_y,
@@ -709,6 +709,21 @@ int main(int argc, char **argv) {
                     .y = chart_height * (1 - SERVER.accuracies[i + 1]) +
                          chart_start_y};
                 DrawLineV(start, end, GREEN);
+            }
+        }
+        if (SERVER.loss) {
+            int spacing = chart_width / da_len(SERVER.loss);
+            for (size_t i = 0; i < da_len(SERVER.loss) - 1; ++i) {
+                Vector2 start = (Vector2){
+                    .x = (float)i * spacing + chart_start_x,
+                    .y = chart_height * (1 - SERVER.loss[i] / SERVER.loss[0]) +
+                         chart_start_y};
+                Vector2 end =
+                    (Vector2){.x = (float)(i + 1) * spacing + chart_start_x,
+                              .y = chart_height * (1 - SERVER.loss[i + 1] /
+                                                           SERVER.loss[0]) +
+                                   chart_start_y};
+                DrawLineV(start, end, YELLOW);
             }
         }
         EndDrawing();
