@@ -231,24 +231,45 @@ int start_client(int num_clients, size_t epochs, size_t batch_size) {
 void usage() {
     printf(
         "Usage:\n./zfl [server|client] [OPTIONS]\n\nOPTIONS:\n  server:\n    "
-        "num_rounds\n    clients_per_round\n  client:\n    num_clients\n    "
-        "epochs\n    batch_size");
+        "-r: number of rounds\n    -c: clients per round\n  client:\n    -c: "
+        "num_clients\n    "
+        "-e: epochs\n    -b: batch_size");
 }
+
+char *shift_args(int *argc, char ***argv) {
+    char *cur = **argv;
+    (*argc)--;
+    (*argv)++;
+    return cur;
+}
+
+const char *num_round_flag = "-r";
+const char *num_clients_flag = "-c";
+const char *epochs_flag = "-e";
+const char *batch_flag = "-b";
 
 int main(int argc, char **argv) {
     if (argc < 3) {
         usage();
         return -1;
     }
-    char *command = argv[1];
+    char *program = shift_args(&argc, &argv);
+    char *command = shift_args(&argc, &argv);
     if (strncmp(command, "server", strlen("server")) == 0) {
-        int num_rounds = atoi(argv[2]);
-        if (num_rounds == 0) {
-            usage();
-            return -1;
+        int num_rounds = 0;
+        int clients_per_round = 0;
+        while (argc > 0) {
+            char *arg = shift_args(&argc, &argv);
+            if (strncmp(arg, num_round_flag, strlen(num_round_flag)) == 0) {
+                char *val = shift_args(&argc, &argv);
+                num_rounds = atoi(val);
+            } else if (strncmp(arg, num_clients_flag,
+                               strlen(num_clients_flag)) == 0) {
+                char *val = shift_args(&argc, &argv);
+                clients_per_round = atoi(val);
+            }
         }
-        int clients_per_round = atoi(argv[3]);
-        if (clients_per_round == 0) {
+        if (num_rounds == 0 || clients_per_round == 0) {
             usage();
             return -1;
         }
@@ -267,18 +288,24 @@ int main(int argc, char **argv) {
             return -1;
         }
     } else if (strncmp(command, "client", strlen("client")) == 0) {
-        int num_clients = atoi(argv[2]);
-        if (num_clients == 0) {
-            usage();
-            return -1;
+        int num_clients = 0;
+        int epochs = 0;
+        int batch_size = 0;
+        while (argc > 0) {
+            char *arg = shift_args(&argc, &argv);
+            if (strncmp(arg, epochs_flag, strlen(epochs_flag)) == 0) {
+                char *val = shift_args(&argc, &argv);
+                epochs = atoi(val);
+            } else if (strncmp(arg, num_clients_flag,
+                               strlen(num_clients_flag)) == 0) {
+                char *val = shift_args(&argc, &argv);
+                num_clients = atoi(val);
+            } else if (strncmp(arg, batch_flag, strlen(batch_flag)) == 0) {
+                char *val = shift_args(&argc, &argv);
+                batch_size = atoi(val);
+            }
         }
-        int epochs = atoi(argv[3]);
-        if (epochs == 0) {
-            usage();
-            return -1;
-        }
-        int batch_size = atoi(argv[4]);
-        if (batch_size == 0) {
+        if (num_clients == 0 || epochs == 0 || batch_size == 0) {
             usage();
             return -1;
         }

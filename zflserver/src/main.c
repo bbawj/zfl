@@ -210,6 +210,8 @@ int send_training_images(int client_socket, int id) {
     return send_file(client_socket, images);
 }
 
+void simulate_dropoff() {}
+
 void *handle_results(int id, char *results, size_t len) {
     printf("INFO: Client %d responded with results size %zu\n", id, len);
     Payload p = {0};
