@@ -3,6 +3,9 @@ LOG_MODULE_REGISTER(zflclient, LOG_LEVEL_DBG);
 
 #include <zephyr/debug/thread_analyzer.h>
 #include <zephyr/kernel.h>
+#include <zephyr/net/net_core.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/net_stats.h>
 #include <zephyr/net/socket.h>
 #include <zephyr/shell/shell.h>
 
@@ -64,6 +67,16 @@ int recvall(int sock, StringBuilder *sb) {
     return total;
 }
 
+static void get_stats(Stats *s) {
+    struct net_stats_tcp data;
+
+    net_mgmt(NET_REQUEST_STATS_GET_TCP, NULL, &data, sizeof(data));
+    s->bytes_sent = data.bytes.sent;
+    s->bytes_recv = data.bytes.received;
+    s->seg_rexmit = data.rexmit;
+    s->seg_dropped = data.drop;
+}
+
 int init_model(Token *weights) {
     LOG_INF("Initializing Model, random: %d", RANDOM_NN);
 #if RANDOM_NN
@@ -122,6 +135,19 @@ int send_weights(size_t round_number, int64_t training_time) {
     sb_appendf(&sb, "{\"round\": %zu, \"training_time\": %ld, \"weights\": ",
                round_number, training_time);
     weights_to_string(&sb, &TRAINER.model);
+
+    sb_append(&sb, ", ", 2);
+    Stats *s = malloc(sizeof(Stats));
+    get_stats(s);
+    printf("\"stats\": { \"bytes_sent\": %d, \"bytes_recv\": %d, "
+           "\"seg_dropped\": %d, \"seg_rexmit\": %d }\n",
+           s->bytes_sent, s->bytes_recv, s->seg_dropped, s->seg_rexmit);
+    sb_appendf(&sb,
+               "\"stats\": { \"bytes_sent\": %d, \"bytes_recv\": %d, "
+               "\"seg_dropped\": %d, \"seg_rexmit\": %d }",
+               s->bytes_sent, s->bytes_recv, s->seg_dropped, s->seg_rexmit);
+    free(s);
+
     sb_append(&sb, "}", 1);
     char req[256];
     int req_len = snprintf(req, sizeof(req),

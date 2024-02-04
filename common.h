@@ -13,10 +13,16 @@
 #define ARCH_COUNT 3
 
 typedef struct {
+    uint32_t bytes_sent, bytes_recv, seg_rexmit, seg_dropped;
+
+    int64_t training_time;
+} Stats;
+
+typedef struct {
     Token *json;
     size_t round_number;
-    int64_t training_time;
     Token *weights;
+    Stats stats;
 } Payload;
 
 Mat init_train_set(char *img_data, char *label_data, int n_images);
@@ -106,6 +112,11 @@ int deserialize_training_data(char *data, size_t size, Payload *p) {
     const char round_key[] = "round";
     const char weights_key[] = "weights";
     const char time_key[] = "training_time";
+    const char stats_key[] = "stats";
+    const char sent_key[] = "bytes_sent";
+    const char recv_key[] = "bytes_recv";
+    const char drop_key[] = "seg_dropped";
+    const char rexmit_key[] = "seg_rexmit";
     size_t round_number = 0;
     while (key != NULL) {
         if (strncmp(key->text, round_key, strlen(round_key)) == 0) {
@@ -118,7 +129,22 @@ int deserialize_training_data(char *data, size_t size, Payload *p) {
         } else if (strncmp(key->text, weights_key, strlen(weights_key)) == 0) {
             p->weights = key->child->child;
         } else if (strncmp(key->text, time_key, strlen(time_key)) == 0) {
-            p->training_time = strtoll(key->child->text, NULL, 10);
+            p->stats.training_time = strtoll(key->child->text, NULL, 10);
+        } else if (strncmp(key->text, stats_key, strlen(stats_key)) == 0) {
+            Token *s = key->child->next;
+            while (s != NULL) {
+                if (strncmp(s->text, sent_key, strlen(sent_key)) == 0) {
+                    p->stats.bytes_sent = atoi(s->child->text);
+                } else if (strncmp(s->text, recv_key, strlen(recv_key)) == 0) {
+                    p->stats.bytes_recv = atoi(s->child->text);
+                } else if (strncmp(s->text, drop_key, strlen(drop_key)) == 0) {
+                    p->stats.seg_dropped = atoi(s->child->text);
+                } else if (strncmp(s->text, rexmit_key, strlen(rexmit_key)) ==
+                           0) {
+                    p->stats.seg_rexmit = atoi(s->child->text);
+                }
+                s = s->next;
+            }
         } else {
             // printf("Invalid key %s\n", key->text);
             // return -1;

@@ -28,7 +28,7 @@
 #define PEER_PORT 8080
 #define READ_TIMEOUT 5
 
-pthread_mutex_t bytes_transferred_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_mutex_t stats_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t round_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t client_mutex = PTHREAD_MUTEX_INITIALIZER;
 pthread_mutex_t result_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -63,10 +63,11 @@ typedef struct {
 typedef struct {
     size_t num_rounds;
     size_t clients_per_round;
-    size_t bytes_transferred;
-    size_t total_training_time;
+
     float *accuracies;
     float *loss;
+    Stats **stats;
+
     char logs[LOG_LENGTH_MAX][1024];
     size_t log_len;
     size_t clients_ready;
@@ -77,10 +78,49 @@ typedef struct {
 
 static Server SERVER = {0};
 
-void increment_bytes_transferred(size_t bytes) {
-    pthread_mutex_lock(&bytes_transferred_mutex);
-    SERVER.bytes_transferred += bytes;
-    pthread_mutex_unlock(&bytes_transferred_mutex);
+void update_stats(Stats s, int round_number) {
+    pthread_mutex_lock(&stats_mutex);
+    int len = da_len(SERVER.stats);
+    if (len < round_number) {
+        da_put(SERVER.stats, NULL);
+    }
+    da_put(SERVER.stats[round_number - 1], s);
+    pthread_mutex_unlock(&stats_mutex);
+}
+
+static void write_stats() {
+    StringBuilder sb;
+    sb_init(&sb, 1024);
+    sb_append(&sb, "[", 1);
+    for (size_t i = 0; i < da_len(SERVER.stats); ++i) {
+        sb_appendf(&sb, "{\"accuracy\": %f, \"loss\": %f, \"stats\": [",
+                   SERVER.accuracies[i], SERVER.loss[i]);
+
+        Stats *s = SERVER.stats[i];
+        for (size_t j = 0; j < da_len(s); ++j) {
+            sb_append(&sb, "{", 1);
+            sb_appendf(&sb,
+                       "\"training_time\": %zu, \"sent\": %ld, \"recv\": %ld, "
+                       "\"dropped\": %ld, \"rexmit\": %ld",
+                       s->training_time, s->bytes_sent, s->bytes_recv,
+                       s->seg_dropped, s->seg_rexmit);
+            sb_append(&sb, "}", 1);
+            if (j != da_len(s) - 1) {
+                sb_append(&sb, ",", 1);
+            }
+        }
+        sb_append(&sb, "]}", 2);
+        if (i != da_len(SERVER.stats) - 1) {
+            sb_append(&sb, ",", 1);
+        }
+    }
+    sb_append(&sb, "]", 1);
+    FILE *f = fopen("stats.json", "w");
+    assert(f);
+
+    int ret = fwrite(sb_string(&sb), sb.size, 1, f);
+    assert(ret > 0);
+    sb_free(&sb);
 }
 
 #define CURRENT_LOG_LEVEL 1
@@ -194,7 +234,6 @@ int send_id(int client_socket, char *addr) {
     pthread_mutex_unlock(&client_mutex);
 
     int sent = send(client_socket, res, len, 0);
-    increment_bytes_transferred(sent);
     return sent;
 }
 
@@ -213,12 +252,15 @@ int send_training_images(int client_socket, int id) {
 void simulate_dropoff() {}
 
 void *handle_results(int id, char *results, size_t len) {
-    printf("INFO: Client %d responded with results size %zu\n", id, len);
     Payload p = {0};
     if (deserialize_training_data(results, len, &p) == -1) {
         log_append(ERROR, "invalid json response for results\n");
         goto clean;
     }
+    log_append(DEBUG, "stats: %ld, %ld, %ld, %ld\n", p.stats.bytes_recv,
+               p.stats.bytes_sent, p.stats.seg_dropped, p.stats.seg_rexmit);
+    update_stats(p.stats, p.round_number);
+
     pthread_mutex_lock(&round_mutex);
     if (p.round_number != SERVER.current_round.round_number) {
         pthread_mutex_unlock(&round_mutex);
@@ -237,8 +279,6 @@ void *handle_results(int id, char *results, size_t len) {
                    id, p.round_number);
         goto clean;
     }
-
-    SERVER.total_training_time += p.training_time;
 
     parse_weights_json(p.weights, SERVER.current_round.weights,
                        SERVER.current_round.biases,
@@ -317,16 +357,13 @@ void *handle_incoming_connection(void *con) {
     Http h = {0};
     StringBuilder sb = {0};
     sb_init(&sb, 1024);
-    size_t total_recv = 0;
 
     int required_len = recv_required_req(&h, &sb, info->sock);
     if (required_len < 0)
         goto clean;
-    total_recv += required_len;
     int optional_len = recv_optional_headers(&h, &sb, info->sock, required_len);
     if (optional_len < 0)
         goto clean;
-    total_recv += optional_len;
 
     parse_query_param(&h);
     printf("INFO: %s request for: %s\n", h.method, h.url);
@@ -371,8 +408,6 @@ void *handle_incoming_connection(void *con) {
             if (ret == -1)
                 goto clean;
 
-            total_recv += ret;
-
             char *content = substr(sb.data, offset, content_len);
             if (content != NULL) {
                 handle_results(id, content, content_len);
@@ -389,7 +424,6 @@ void *handle_incoming_connection(void *con) {
         printf("INFO: 405 method not supported: %s\n", h.method);
     }
 clean:
-    increment_bytes_transferred(total_recv);
     close(info->sock);
     free(con);
     return 0;
@@ -401,10 +435,7 @@ void *start_round() {
         if (SERVER.current_round.round_number > SERVER.num_rounds) {
             printf("INFO: all %zu rounds completed. Final accuracies:\n",
                    SERVER.current_round.round_number);
-            for (size_t i = 0; i < da_len(SERVER.accuracies); ++i) {
-                printf("Round %lu. Accuracy: %f. Loss: %f\n", i + 1,
-                       SERVER.accuracies[i], SERVER.loss[i]);
-            }
+            write_stats();
             break;
         }
         log_append(INFO, "INFO: waiting for %d seconds before starting...\n",
@@ -473,7 +504,6 @@ void *start_round() {
                     sendall(sock, req, len);
                     sendall(sock, sb.data, sb.size);
 
-                    increment_bytes_transferred(sb.size + len);
                     sb_free(&sb);
                     close(sock);
                 }
@@ -663,20 +693,12 @@ int main(int argc, char **argv) {
                  SERVER.current_round.round_number);
         DrawText(stats, panel_start, panel_start + panel_element_spacing,
                  panel_font_size, RAYWHITE);
-        snprintf(stats, sizeof(stats), "Bytes Transferred: %zu",
-                 SERVER.bytes_transferred);
-        DrawText(stats, panel_start, panel_start + 2 * panel_element_spacing,
-                 panel_font_size, RAYWHITE);
         snprintf(stats, sizeof(stats), "Clients ready: %zu",
                  SERVER.clients_ready);
-        DrawText(stats, panel_start, panel_start + 3 * panel_element_spacing,
-                 panel_font_size, RAYWHITE);
-        snprintf(stats, sizeof(stats), "Total training time: %zu",
-                 SERVER.total_training_time);
-        DrawText(stats, panel_start, panel_start + 4 * panel_element_spacing,
+        DrawText(stats, panel_start, panel_start + 2 * panel_element_spacing,
                  panel_font_size, RAYWHITE);
 
-        DrawText("Logs:", panel_start, panel_start + 6 * panel_element_spacing,
+        DrawText("Logs:", panel_start, panel_start + 5 * panel_element_spacing,
                  panel_font_size, RAYWHITE);
         for (int i = SERVER.log_len - 1, j = 1; i >= 0; --i, ++j) {
             DrawText(SERVER.logs[i], panel_start,

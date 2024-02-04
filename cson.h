@@ -22,11 +22,6 @@
 #endif
 
 typedef struct {
-    char *line;
-    size_t len;
-} Buffer;
-
-typedef struct {
     char *b;
     size_t cap;
     size_t size;
