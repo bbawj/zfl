@@ -9,8 +9,8 @@ with open("../zflserver/stats.json") as json_file:
     sent_sum = [0]
     received_sum = [0]
     received_avg = []
-    dropped_sum = []
-    rexmit_sum = []
+    dropped_sum = [0]
+    rexmit_sum = [0]
 
     for round_data in json_data:
         training_time_round = [client["training_time"] for client in round_data["stats"]]
@@ -30,16 +30,23 @@ with open("../zflserver/stats.json") as json_file:
     rounds = range(1, len(json_data) + 1)
     actual_sent = [y - x for x, y in zip(sent_sum, sent_sum[1:])]
     actual_recv = [y - x for x, y in zip(received_sum, received_sum[1:])]
+    # actual_dropped = [y - x for x, y in zip(dropped_sum, dropped_sum[1:])]
+    actual_rexmit = [y - x for x, y in zip(rexmit_sum, rexmit_sum[1:])]
+    # print(dropped_sum)
 
     plt.figure(figsize=(10, 5))
 
     # plt.plot(rounds, training_time_avg, label='Average Training Time', marker='o')
-    plt.plot(rounds[1:], actual_sent[1:], label='Bytes Sent', marker='o')
-    plt.plot(rounds[1:], actual_recv[1:], label='Bytes Received', marker='o')
+    # plt.plot(rounds[1:], actual_sent[1:], label='Bytes Sent', marker='o')
+    # plt.plot(rounds[1:], actual_recv[1:], label='Bytes Received', marker='o')
+    # plt.plot(rounds[0:], dropped_sum[1:], label='Dropped', marker='o')
+    # plt.plot(rounds[0:], rexmit_sum[1:], label='Retransmitted', marker='o')
+
+    plt.plot(rounds[0:], training_time_avg[0:], label='Training Time', marker='o')
 
     plt.xlabel('Round')
-    plt.ylabel('Average')
-    plt.title('Average Statistics Over 20 Rounds')
+    plt.ylabel('Average Training Time')
+    # plt.title('Statistics Over 20 Rounds')
     plt.legend()
     plt.grid(True)
     plt.show()

@@ -141,7 +141,8 @@ properties:
 \begin{itemize}
   \item Provide better insight into hardware specific support by running FL on emulated hardware
     through QEMU and Zephyr OS.
-  \item Collect useful metrics during the FL lifecycle.
+  \item Collect useful metrics during the FL lifecycle, especially on variables typically difficult
+    to simulate.
   \item Support simulation of real word issues such as variable data and client drop-off.
 \end{itemize}
 
@@ -359,6 +360,19 @@ section \ref{experiments}. %TODO: talk more about the implications of these resu
   \label{fig:clientinit}
 \end{figure}
 
+\subsubsection{Metrics}\label{metrics}
+The benefit of using emulated hardware is the ability to collect real statistics during the operation
+of the machine. The Zephyr OS exposes kernel APIs for user applications to query for network
+statistics such as bytes sent and received, as well as specific network L3 and L4 data including
+the number of IP and TCP packets dropped and retransmitted.
+\begin{verbatim}
+  net_mgmt(NET_REQUEST_STATS_GET_TCP, NULL, &data, sizeof(data));
+\end{verbatim}
+This data is queried by each client and sent together with their updated weights.
+The total training time in seconds is also tallied. This is displayed along with additional details such as
+the current round, number of ready clients, as well as a graph of the validation set loss and
+accuracy on a simple graphical user interface shown in Figure \ref{fig:gui}.
+
 \subsection{Server}
 The central server runs on the host machine without needing additional configuration. Its primary
 purpose is to aggregate individual client weights every round. Implemented HTTP endpoints are described in figure
@@ -369,13 +383,6 @@ ready, it sends a HTTP POST request to the \verb|start| endpoint of the client, 
 function. Once the client has completed its training, it sends the resulting weights of the local model
 to the HTTP POST endpoint \verb|results| of the server, which then performs the aggregation. The
 sequence of events for a single round is illustrated in Figure \ref{fig:flround}.
-
-\subsubsection{Metrics}
-As part of the framework's aim to track useful metrics, the server keeps track of the total number
-of bytes transferred between the clients and itself during the entire FL lifecycle. The total
-training time in seconds is also tallied. This is displayed along with additional details such as
-the current round, number of ready clients, as well as a graph of the validation set loss and
-accuracy on a simple graphical user interface shown in Figure \ref{fig:gui}.
 
 \begin{figure}
   \centering
@@ -443,20 +450,39 @@ accuracy gain. For one, the model architecture is very shallow, reducing each cl
 make significant steps towards their local minima. Furthermore, traditional FedAvg also suffers from
 model inaccuracy caused by the loss of knowledge during model training\cite{hinton2015distilling}. Nevertheless, although the framework is unable to converge
 towards an acceptable target accuracy during the experiment, a steadily decreasing cross entropy
-loss helps to validate that the entire system is performing.
+loss helps to validate that the entire system is performing. \\
 
-\begin{figure}
-\begin{subfigure}{.5\textwidth}
-  \centering
-  \includegraphics[scale=0.5]{loss}
-  \caption{20 round validation set loss}
+As described in section \ref{metrics}, Figure \ref{fig:bytes} and Figure
+\ref{fig:tcp} plots the network statistics while Figure \ref{fig:training_time} depicts the training time.
+
+\begin{figure}[hbt!]
+\begin{subfigure}{.475\linewidth}
+  \includegraphics[width=\linewidth]{loss}
+  \caption{Validation set loss}
   \label{fig:loss}
-\end{subfigure}
-\begin{subfigure}{.5\textwidth}
-  \centering
-  \includegraphics[scale=0.5]{accuracy}
-  \caption{20 round validation set accuracy}
+\end{subfigure}\hfill
+\begin{subfigure}{.475\linewidth}
+  \includegraphics[width=\linewidth]{accuracy}
+  \caption{Validation set accuracy}
   \label{fig:accuracy}
+\end{subfigure}
+
+\medskip
+\begin{subfigure}{.475\linewidth}
+  \includegraphics[width=\linewidth]{bytes}
+  \caption{Total Bytes Sent and Received}
+  \label{fig:bytes}
+\end{subfigure}\hfill
+\begin{subfigure}[b]{.475\linewidth}
+  \includegraphics[width=\linewidth]{tcp}
+  \caption{TCP Segments Dropped and Resent}
+  \label{fig:tcp}
+\end{subfigure}
+
+\begin{subfigure}[b]{\linewidth}
+  \includegraphics[width=\linewidth]{training_time}
+  \caption{Average Training Time}
+  \label{fig:training_time}
 \end{subfigure}
 \end{figure}
 
