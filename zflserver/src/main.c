@@ -1,4 +1,6 @@
 #include "raylib.h"
+#include "time.h"
+#include <stdint.h>
 #define IS_SERVER
 #define SB_IMPLEMENTATION
 #define CSON_IMPLEMENTATION
@@ -23,6 +25,8 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
+
+#define HEADLESS
 
 #define PORT 8080
 #define PEER_PORT 8080
@@ -49,6 +53,7 @@ typedef struct {
 typedef struct {
     bool started;
     bool averaging;
+    long start_time;
     size_t round_number;
     size_t participants;
     size_t responded;
@@ -66,6 +71,7 @@ typedef struct {
 
     float *accuracies;
     float *loss;
+    uint64_t *round_time;
     Stats **stats;
 
     char logs[LOG_LENGTH_MAX][1024];
@@ -93,8 +99,10 @@ static void write_stats() {
     sb_init(&sb, 1024);
     sb_append(&sb, "[", 1);
     for (size_t i = 0; i < da_len(SERVER.stats); ++i) {
-        sb_appendf(&sb, "{\"accuracy\": %f, \"loss\": %f, \"stats\": [",
-                   SERVER.accuracies[i], SERVER.loss[i]);
+        sb_appendf(
+            &sb,
+            "{\"accuracy\": %f, \"loss\": %f, \"round_time\": %f, \"stats\": [",
+            SERVER.accuracies[i], SERVER.loss[i], SERVER.round_time[i]);
 
         Stats *s = SERVER.stats[i];
         for (size_t j = 0; j < da_len(s); ++j) {
@@ -205,6 +213,7 @@ int send_file(int client_socket, const char *file_path) {
             if (sent == -1) {
                 printf("Error sending data to peer, errno: %s\n",
                        strerror(errno));
+                fclose(fd);
                 return -1;
             }
             ret -= sent;
@@ -288,7 +297,6 @@ void *handle_results(int id, char *results, size_t len) {
     // TODO: allow certain fraction of clients to dropoff
     SERVER.current_round.averaging =
         SERVER.current_round.responded == SERVER.current_round.participants;
-    pthread_mutex_unlock(&result_mutex);
 
     if (SERVER.current_round.averaging) {
         log_append(INFO,
@@ -317,14 +325,17 @@ void *handle_results(int id, char *results, size_t len) {
             INFO,
             "INFO: Final Model. Accuracy against test set: %f, Loss: %f\n", acc,
             loss);
+        da_put(SERVER.round_time, time(NULL) - SERVER.current_round.start_time);
         da_put(SERVER.accuracies, acc);
         da_put(SERVER.loss, loss);
 
         pthread_mutex_lock(&round_mutex);
         SERVER.current_round.started = false;
         SERVER.current_round.averaging = false;
+        SERVER.current_round.responded = 0;
         pthread_mutex_unlock(&round_mutex);
     }
+    pthread_mutex_unlock(&result_mutex);
 clean:
     free_tokens(p.json);
     free(results);
@@ -432,7 +443,7 @@ clean:
 void *start_round() {
     int delay = 10;
     while (1) {
-        if (SERVER.current_round.round_number > SERVER.num_rounds) {
+        if (SERVER.current_round.round_number >= SERVER.num_rounds) {
             printf("INFO: all %zu rounds completed. Final accuracies:\n",
                    SERVER.current_round.round_number);
             write_stats();
@@ -453,6 +464,7 @@ void *start_round() {
         pthread_mutex_unlock(&round_mutex);
 
         log_append(DEBUG, "DEBUG: checking client ready status\n");
+        pthread_mutex_lock(&client_mutex);
         SERVER.clients_ready = 0;
         for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
             Client *c = &SERVER.clients[i];
@@ -460,7 +472,7 @@ void *start_round() {
             char req[256];
             snprintf(req, sizeof(req), "%s %s \r\n\r\n", GET, READY_ENDPOINT);
             sendall(sock, req, strlen(req));
-            char buf[10];
+            char buf[4];
             if (recv(sock, buf, sizeof(buf), 0) <= 0) {
                 printf("ERROR: no ready payload received from %s\n", c->ipaddr);
                 c->ready = false;
@@ -475,20 +487,23 @@ void *start_round() {
         clean:
             close(sock);
         }
+        pthread_mutex_unlock(&client_mutex);
 
         if (SERVER.clients_ready == SERVER.clients_per_round) {
             pthread_mutex_lock(&round_mutex);
             SERVER.current_round.started = true;
+            SERVER.current_round.start_time = time(NULL);
+            ++SERVER.current_round.round_number;
+            SERVER.current_round.participants = SERVER.clients_ready;
             pthread_mutex_unlock(&round_mutex);
 
-            ++SERVER.current_round.round_number;
+            pthread_mutex_lock(&client_mutex);
             log_append(INFO,
                        "INFO: %zu clients are ready, starting round %zu\n",
                        SERVER.clients_ready, SERVER.current_round.round_number);
             for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
                 Client c = SERVER.clients[i];
                 if (c.ready) {
-                    ++SERVER.current_round.participants;
                     int sock = connect_client(c.ipaddr);
                     char req[256];
                     StringBuilder sb;
@@ -508,6 +523,7 @@ void *start_round() {
                     close(sock);
                 }
             }
+            pthread_mutex_unlock(&client_mutex);
         }
     }
     return NULL;
@@ -541,7 +557,7 @@ void *accept_conns(void *fd) {
 
         ConnectionInfo *con = malloc(sizeof(ConnectionInfo));
         con->sock = client_socket;
-        con->addr = inet_ntoa(client_addr.sin_addr);
+        con->addr = strdup(inet_ntoa(client_addr.sin_addr));
         printf("INFO: Client connected from %s\n", con->addr);
         pthread_t th;
         pthread_create(&th, NULL, handle_incoming_connection, con);
@@ -555,6 +571,7 @@ int main(int argc, char **argv) {
     }
     SERVER.num_rounds = atoi(argv[1]);
     SERVER.clients_per_round = atoi(argv[2]);
+    SERVER.round_time = NULL;
     SERVER.accuracies = NULL;
     SERVER.clients = NULL;
     SERVER.log_len = 0;
@@ -600,6 +617,7 @@ int main(int argc, char **argv) {
     assert(SERVER.current_round.weights);
     SERVER.current_round.biases = malloc(sizeof(float *) * (ARCH_COUNT - 1));
     assert(SERVER.current_round.biases);
+
     for (int i = 0; i < ARCH_COUNT - 1; ++i) {
         SERVER.current_round.weights[i] =
             malloc(sizeof(float) * ARCH[i] * ARCH[i + 1]);
@@ -667,6 +685,7 @@ int main(int argc, char **argv) {
     pthread_t listener;
     pthread_create(&listener, NULL, accept_conns, sock);
 
+#ifndef HEADLESS
     // Start UI
     int window_width = 1600;
     int window_height = 900;
@@ -752,6 +771,10 @@ int main(int argc, char **argv) {
         }
         EndDrawing();
     }
+#else
+    pthread_join(th, NULL);
+    // pthread_join(listener, NULL);
+#endif
 
     CloseWindow();
 }
