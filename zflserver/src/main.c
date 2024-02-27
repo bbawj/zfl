@@ -127,6 +127,7 @@ static void write_stats() {
     assert(f);
 
     int ret = fwrite(sb_string(&sb), sb.size, 1, f);
+    fclose(f);
     assert(ret > 0);
     sb_free(&sb);
 }
@@ -468,9 +469,9 @@ void *start_round() {
         SERVER.clients_ready = 0;
         for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
             Client *c = &SERVER.clients[i];
-            int sock = connect_client(c->ipaddr);
             char req[256];
             snprintf(req, sizeof(req), "%s %s \r\n\r\n", GET, READY_ENDPOINT);
+            int sock = connect_client(c->ipaddr);
             sendall(sock, req, strlen(req));
             char buf[4];
             if (recv(sock, buf, sizeof(buf), 0) <= 0) {
@@ -504,23 +505,39 @@ void *start_round() {
             for (size_t i = 0; i < da_len(SERVER.clients); ++i) {
                 Client c = SERVER.clients[i];
                 if (c.ready) {
-                    int sock = connect_client(c.ipaddr);
-                    char req[256];
-                    StringBuilder sb;
-                    sb_init(&sb, 1024);
-                    sb_appendf(&sb, "{\"round\": %zu, \"weights\": ",
-                               SERVER.current_round.round_number);
-                    weights_to_string(&sb, &SERVER.current_round.nn);
-                    sb_append(&sb, "}", 1);
-                    int len = snprintf(
-                        req, sizeof(req),
-                        "POST /train \r\nContent-Length: %zu\r\n\r\n", sb.size);
-                    printf("INFO: sending POST /train request\n");
-                    sendall(sock, req, len);
-                    sendall(sock, sb.data, sb.size);
+                    int retries = 3;
+                    for (int i = 0; i < retries; ++i) {
+                        int sock = connect_client(c.ipaddr);
+                        if (sock < 0)
+                            continue;
+                        char req[256];
+                        StringBuilder sb;
+                        sb_init(&sb, 1024);
+                        sb_appendf(&sb, "{\"round\": %zu, \"weights\": ",
+                                   SERVER.current_round.round_number);
+                        weights_to_string(&sb, &SERVER.current_round.nn);
+                        sb_append(&sb, "}", 1);
+                        int len = snprintf(
+                            req, sizeof(req),
+                            "POST /train \r\nContent-Length: %zu\r\n\r\n",
+                            sb.size);
+                        printf("INFO: sending POST /train request\n");
+                        int ret = sendall(sock, req, len);
+                        if (ret < 0) {
+                            close(sock);
+                            continue;
+                        }
 
-                    sb_free(&sb);
-                    close(sock);
+                        ret = sendall(sock, sb.data, sb.size);
+                        if (ret < 0) {
+                            close(sock);
+                            continue;
+                        }
+
+                        sb_free(&sb);
+                        close(sock);
+                        break;
+                    }
                 }
             }
             pthread_mutex_unlock(&client_mutex);
