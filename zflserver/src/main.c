@@ -1,4 +1,5 @@
 #include "raylib.h"
+#include "sys/wait.h"
 #include "time.h"
 #include <stdint.h>
 #define IS_SERVER
@@ -68,6 +69,7 @@ typedef struct {
 typedef struct {
     size_t num_rounds;
     size_t clients_per_round;
+    bool emulate_loss;
 
     float *accuracies;
     float *loss;
@@ -99,10 +101,10 @@ static void write_stats() {
     sb_init(&sb, 1024);
     sb_append(&sb, "[", 1);
     for (size_t i = 0; i < da_len(SERVER.stats); ++i) {
-        sb_appendf(
-            &sb,
-            "{\"accuracy\": %f, \"loss\": %f, \"round_time\": %f, \"stats\": [",
-            SERVER.accuracies[i], SERVER.loss[i], SERVER.round_time[i]);
+        sb_appendf(&sb,
+                   "{\"accuracy\": %f, \"loss\": %f, \"round_time\": %ld, "
+                   "\"stats\": [",
+                   SERVER.accuracies[i], SERVER.loss[i], SERVER.round_time[i]);
 
         Stats *s = SERVER.stats[i];
         for (size_t j = 0; j < da_len(s); ++j) {
@@ -492,6 +494,26 @@ void *start_round() {
 
         if (SERVER.clients_ready == SERVER.clients_per_round) {
             pthread_mutex_lock(&round_mutex);
+            if (SERVER.current_round.round_number == 0 && SERVER.emulate_loss) {
+                pid_t child = fork();
+                if (child < 0) {
+                    printf("ERROR: could not fork a child: %s\n",
+                           strerror(errno));
+                    exit(EXIT_FAILURE);
+                }
+                if (child == 0) {
+                    int ret =
+                        execlp("sudo", "tc", "tc", "qdisc", "add", "dev", "zfl",
+                               "root", "netem", "loss", "10%", NULL);
+                    if (ret < 0) {
+                        printf(
+                            "ERROR: could not set up netem loss because: %s\n",
+                            strerror(errno));
+                        exit(EXIT_FAILURE);
+                    }
+                }
+                wait(NULL);
+            }
             SERVER.current_round.started = true;
             SERVER.current_round.start_time = time(NULL);
             ++SERVER.current_round.round_number;
@@ -582,12 +604,14 @@ void *accept_conns(void *fd) {
 }
 
 int main(int argc, char **argv) {
-    if (argc != 3) {
-        printf("Usage:\n ./server [num_rounds] [clients_per_round]>\n");
+    if (argc != 4) {
+        printf("Usage:\n ./server [num_rounds] [clients_per_round] "
+               "[emulate_loss]\n");
         return -1;
     }
     SERVER.num_rounds = atoi(argv[1]);
     SERVER.clients_per_round = atoi(argv[2]);
+    SERVER.emulate_loss = atoi(argv[3]);
     SERVER.round_time = NULL;
     SERVER.accuracies = NULL;
     SERVER.clients = NULL;

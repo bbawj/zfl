@@ -12,7 +12,10 @@
 #include <time.h>
 #include <unistd.h>
 
-const char *netsetup_path = "./net-setup.sh";
+#define ZFL "zfl"
+#define ZFL_CAPTURE "zfl-ip6ip6"
+
+#define NETSETUP_PATH "./net-setup.sh"
 
 int setup_net_interface(const char *conf, const char *command,
                         const char *iname) {
@@ -22,11 +25,11 @@ int setup_net_interface(const char *conf, const char *command,
         return EXIT_FAILURE;
     }
     if (child == 0) {
-        int ret = execl(netsetup_path,
+        int ret = execl(NETSETUP_PATH,
                         // "sudo",
-                        netsetup_path,
+                        NETSETUP_PATH,
 
-                        command, NULL);
+                        command, "-c", conf, "-i", iname, NULL);
 
         if (ret < 0) {
             printf("ERROR: could not run net-setup for %s %s as a child "
@@ -37,12 +40,12 @@ int setup_net_interface(const char *conf, const char *command,
     }
 
     int status;
-    wait(&status);
+    waitpid(child, &status, 0);
 
     return WEXITSTATUS(status);
 }
 
-int start_server(int num_rounds, int clients_per_round) {
+int start_server(int num_rounds, int clients_per_round, bool emulate_loss) {
     char *server_dir = "./zflserver";
 
     pid_t child = fork();
@@ -57,7 +60,8 @@ int start_server(int num_rounds, int clients_per_round) {
         snprintf(nr, sizeof(nr), "%d", num_rounds);
         char cpr[100];
         snprintf(cpr, sizeof(cpr), "%d", clients_per_round);
-        int ret = execlp("./server", "./server", nr, cpr, NULL);
+        int ret = execlp("./server", "./server", nr, cpr,
+                         emulate_loss ? "1" : "0", NULL);
         if (ret < 0) {
             printf("ERROR: could not run server start as a child process: "
                    "%s\n",
@@ -247,6 +251,7 @@ const char *num_round_flag = "-r";
 const char *num_clients_flag = "-c";
 const char *epochs_flag = "-e";
 const char *batch_flag = "-b";
+const char *loss_flag = "--loss";
 
 int main(int argc, char **argv) {
     if (argc < 3) {
@@ -258,6 +263,7 @@ int main(int argc, char **argv) {
     if (strncmp(command, "server", strlen("server")) == 0) {
         int num_rounds = 0;
         int clients_per_round = 0;
+        bool emulate_loss = false;
         while (argc > 0) {
             char *arg = shift_args(&argc, &argv);
             if (strncmp(arg, num_round_flag, strlen(num_round_flag)) == 0) {
@@ -267,6 +273,8 @@ int main(int argc, char **argv) {
                                strlen(num_clients_flag)) == 0) {
                 char *val = shift_args(&argc, &argv);
                 clients_per_round = atoi(val);
+            } else if (strncmp(arg, loss_flag, strlen(loss_flag)) == 0) {
+                emulate_loss = true;
             }
         }
         if (num_rounds == 0 || clients_per_round == 0) {
@@ -274,19 +282,35 @@ int main(int argc, char **argv) {
             return -1;
         }
         // Setup the server networking
-        if (setup_net_interface(NULL, "start", NULL) == EXIT_FAILURE) {
+        if (setup_net_interface("zeth.conf", "start", ZFL) == EXIT_FAILURE) {
             printf("ERROR: failed to setup server conf\n");
             return -1;
         }
 
-        start_server(num_rounds, clients_per_round);
+#ifdef CAPTURE
+        if (setup_net_interface("zeth-tunnel.conf", "start", ZFL) ==
+            EXIT_FAILURE) {
+            printf("ERROR: failed to setup zeth-tunnel conf\n");
+            return -1;
+        }
+
+#endif
+        start_server(num_rounds, clients_per_round, emulate_loss);
         // server wait
         wait(NULL);
 
-        if (setup_net_interface(NULL, "stop", NULL) == EXIT_FAILURE) {
+        if (setup_net_interface("zeth.conf", "stop", ZFL) == EXIT_FAILURE) {
             printf("ERROR: failed to stop server conf\n");
             return -1;
         }
+
+#ifdef CAPTURE
+        if (setup_net_interface("zeth.conf", "stop", ZFL_CAPTURE) ==
+            EXIT_FAILURE) {
+            printf("ERROR: failed to stop server conf\n");
+            return -1;
+        }
+#endif
     } else if (strncmp(command, "client", strlen("client")) == 0) {
         int num_clients = 0;
         int epochs = 0;
