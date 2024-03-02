@@ -85,7 +85,9 @@ Mat init_train_set(char *img_data, char *label_data, int n_images) {
         for (int row = 0; row < IMG_HEIGHT; ++row) {
             for (int col = 0; col < IMG_WIDTH; ++col) {
                 float pixel =
-                    img_data[image * IMG_SIZE + row * IMG_WIDTH + col] / 255.0f;
+                    (unsigned char)
+                        img_data[image * IMG_SIZE + row * IMG_WIDTH + col] /
+                    255.0f;
                 MAT_AT(t, image, row * IMG_WIDTH + col) = pixel;
             }
         }
