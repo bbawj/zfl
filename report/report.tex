@@ -49,7 +49,22 @@
 \author{Brendan Ang Wei Jie}
 \begin{document}
 
-\maketitle
+\begin{titlepage}
+  \begin{center}
+    \includegraphics[width=\linewidth]{ntu} % also works with logo.pdf
+    \vfill
+    {\bfseries\Large
+        Emulation Framework for\protect\\ AIoT Federated Learning\\
+        \vskip2cm
+        Brendan Ang Wei Jie\\
+    }
+  \end{center}
+    \vfill
+    \vfill
+    School of Computer Science and Engineering\\
+    2024
+    \vfill
+\end{titlepage}
 
 \pagebreak
 \section{Abstract}
@@ -80,17 +95,14 @@ partner for her unwavering support and critical role as my editor.
 
 \section{Introduction}
 \subsection{Federated Learning}
-Federated Learning (FL) emerged as a method for solving key issues with the standard centralized learning
-approach, namely, it achieves these following important properties:
-\begin{itemize}
-  \item Data Privacy: a centralized training approach involves the need for the centralized
-    machine performing the computation to have full access to the entire data set. With FL, data never
-    leaves each individual client's device. Instead, only the updated weights are shared to form the
-    global model.
-  \item Scalability: FL enables leveraging a network to perform computation in parallel.
-\end{itemize}
+Federated machine learning (FL) emerged as a method for solving key issues with the standard centralized learning
+approach, namely, it serves as a potential solution to the problem of input data privacy. A centralized training approach involves the need for the centralized
+machine performing the computation to have full access to the entire data set. With FL, data never
+leaves each individual client's device. Instead, only the updated weights or other model parameters are shared to form the
+global model, keeping the data local and private.
 
-The key components and processes which make up the FL lifecycle can be detailed as follows:
+The key components and processes which make up the FL lifecycle and allow it to achieve the
+aforementioned advantages over centralized machine learning can be detailed as follows:
 \begin{itemize}
   \item Client Devices: these are the decentralized entities, such as smartphones or IoT devices, possessing local datasets and computational resources. Each client device conducts local model training on its data.
   \item Model Updates: instead of sharing raw data, client devices transmit model updates or gradients to the central server. These updates reflect the knowledge gained from local data during model training.
@@ -118,13 +130,20 @@ devices face key challenges such as:
 \end{itemize}
 
 Hence, the development of FL algorithms often seek to advance progress towards solving the
-aforementioned issues.
+aforementioned issues by improving the convergence rate and increasing communication efficiency. In
+this front, researchers have come up with various methods such as utilising reinforcement learning
+to increase accuracy\cite{Wang2020OptimizingFL}. One study combined Federated Averaging with quantization of model
+updates to achieve reductions in communication cost while minimising impact on accuracy\cite{konečný2017federated}.
+Another study made use of knowledge distillation\cite{hinton2015distilling} that can increase
+model accuracy while also occupying negligible network resources\cite{liu2022efficient}. In this
+paper, we will not be focusing on how to optimize these factors, but rather focus on measuring these
+important metrics for FL research.
 
 \subsection{Problem}
 Prior to effectively deploying FL, different factors including the convergence rate and
 model accuracy needs to be well studied. This gives rise to the need for software simulation. However, the
 simulation of FL in the distributed setting involves dealing with
-issues which do not arise in traditional data center ML research. These include running on different simulated
+issues which do not arise in traditional data center machine learning research. These include running on different simulated
 devices, each with potentially varying amounts of data. Furthermore, metrics such as the number of
 bytes transferred by the device, as well as the ability to simulate real-world issues such as
 network packet loss, can also be important for proposed FL algorithms to handle.
@@ -183,7 +202,9 @@ areas:
     done by benchmarking physical fleets of clients.
 \end{enumerate}
 Hence, there is a lack of frameworks suitable for users who wish to validate and test FL algorithms on different hardware
-architectures but are unable to procure large fleets of physical devices. To bridge this gap,
+architectures, but are unable to procure large fleets of physical devices. Moreover, most existing
+frameworks rely on existing machine learning libraries such as TensorFlow and Pytorch, inherently
+requiring devices to have a Python runtime capable of supporting these dependencies. To bridge this gap,
 one approach to acquiring hardware dependent results is to emulate the hardware environment. This
 can be achieved through software systems. One such system explored the combination of Quick Emulator (QEMU)
 and Zephyr, a real time operating system to emulate embedded devices in the machine learning context\cite{ntu}. However,
@@ -193,8 +214,8 @@ Here, this work proposes a new emulation framework ``zfl'', which aims to achiev
 properties:
 %TODO: LINK BACK TO THESE AIMS
 \begin{itemize}
-  \item Provide better insight into hardware specific support by running FL on emulated hardware
-    through QEMU and Zephyr OS.
+  \item Provide better insight into hardware specific support, especially for embedded IoT
+    applications by running FL on emulated hardware through QEMU and Zephyr OS.
   \item Collect useful metrics during the FL lifecycle, especially on variables typically difficult
     to simulate.
   \item Support simulation of real word scenarios such as variable data and network packet loss.
@@ -209,7 +230,7 @@ part of its software architecture to emulate hardware. Note that by default, the
 is built for QEMU x86 32-bit, which entails the use of the qemu-i386 binary in section \ref{implementation}.
 
 \subsubsection{Zephyr OS}
-To emulate the issue of limited computing resources, it is important to make use of system runtimes
+To emulate the embedded IoT environment, it is important to make use of system runtimes
 used by those devices. Zephyr OS\cite{zephyr} is one such operating system. It is based on a small-footprint kernel designed for use on resource-constrained
 and embedded systems: from simple embedded environmental sensors and LED wearables to sophisticated embedded controllers, smart watches, and IoT wireless applications.
 Furthermore, Zephyr is highly configurable, allowing the user to choose only the specific kernel
@@ -297,7 +318,7 @@ with a randomly generated MAC address as arguments to the \verb|-nic| flag:
 
 Although each QEMU client is now able to communicate with the host via the NIC adapter, we still
 needed a way to monitor the output of each instance. One method is to transmit
-output and logs over the network. However, this would not allow important crash logs and stacktrace
+output and logs over the network. However, this would not allow important crash logs and stack trace
 information to be transmitted as the application software would have shutdown. To overcome this, the host
 creates a named or FIFO pipe for each client, which then is passed into
 QEMU through the \verb|-serial| flag. Now, all standard output goes through the named pipe, ready to be read
@@ -508,19 +529,23 @@ emulation capabilities during the federated learning lifecycle.
 \section{Experiments}\label{experiments}
 The framework is tested using FedAvg over the MNIST digit recognition data set of 60000 labels. Due to memory
 constraints, clients are configured with a neural network architecture with 1 hidden layer of 16
-nodes. Additionally, implementations for the softmax activiation and cross entropy were made to
+nodes. Additionally, implementations for the softmax activation and cross entropy were made to
 ensure suitability for machine learning with MNIST categorical data.\\
 
-To test the sanity of the framework, the data is first shuffled and split equally into 100 sets of 6000 labels.
-The server is started for 20 rounds and 100 clients per round and clients were started with 5 epochs and a batch size of 600.
-Figure \ref{fig:loss} shows the validation set loss and Figure \ref{fig:accuracy} shows the
-validation set accuracy at the end of each round. There can be many reasons for the lack of
-accuracy gain. For one, the model architecture is very shallow, reducing each clients ability to
-make significant steps towards their local minima. Furthermore, traditional FedAvg also suffers from
-model inaccuracy caused by the loss of knowledge during model training\cite{hinton2015distilling}. Nevertheless, although the framework is unable to converge
-towards an acceptable target accuracy during the experiment, a steadily decreasing cross entropy
-loss helps to validate that the entire system is performing. \\
+\subsection{Validation of zfl training accuracy}
+As mentioned earlier, factors affecting convergence rate and thus the number of global rounds is an active research
+area out of the scope of this study. However, to demonstrate the correctness of the implementation,
+the data is first shuffled and split equally into 50 sets of 1200 labels.
+zfl was then run with the following FL parameters:
+\begin{itemize}
+  \item Server: 20 rounds and 50 clients per round
+  \item Clients: 5 epochs and a batch size of 600.
+\end{itemize}
+The result in Figure \ref{fig:accuracy} shows the
+validation set accuracy at the end of each round. In particular, the experiment manages to achieve
+the baseline centralized performance of 86\%.
 
+\subsection{Emulated packet loss}
 In addition, the same experiment is repeated with 10\% packet loss emulation enabled. As described in section \ref{metrics}, Figure \ref{fig:bytes-sent}, \ref{fig:bytes-recv},
 \ref{fig:tcp-dropped}, \ref{fig:tcp-rexmit} plots the network statistics. As expected, packet loss
 results in greater number of TCP retransmissions. Wireshark\cite{wireshark} can also
@@ -529,24 +554,16 @@ be used to capture packet information going through the network interface. Figur
 logarithmic scale. The brown lines represent all good TCP packets while the red bars represent TCP
 errors. Figure \ref{fig:training_time} also depicts the training time.
 
-\begin{figure}[hbt!]
-\begin{subfigure}{.475\linewidth}
-  \includegraphics[width=\linewidth]{loss}
-  \caption{Validation set loss}
-  \label{fig:loss}
-\end{subfigure}\hfill
-\begin{subfigure}{.475\linewidth}
+\begin{figure}
   \includegraphics[width=\linewidth]{accuracy}
   \caption{Validation set accuracy}
   \label{fig:accuracy}
-\end{subfigure}
+\end{figure}
 
-\medskip
-\begin{subfigure}[b]{\linewidth}
+\begin{figure}
   \includegraphics[width=\linewidth]{avg-training}
   \caption{Average Training Time}
   \label{fig:training_time}
-\end{subfigure}
 \end{figure}
 
 \begin{figure}
@@ -580,7 +597,7 @@ errors. Figure \ref{fig:training_time} also depicts the training time.
 \end{figure}
 
 \pagebreak
-\section{Limitations}
+\section{Limitations and Future Work}
 \subsection{Long training times}
 Unoptimized client training implementations has resulted in long training times required per FL
 round. This is because standard implementations for machine learning
@@ -605,9 +622,18 @@ the usability of the framework. These algorithms should aim to achieve higher mo
 compromising on the requirements needed to function in an embedded low-powered device environment.
 One example could be Distillation Based Federated Learning\cite{liu2022efficient}.
 
-\subsection{Platform support}
+\subsection{Cross-Platform support}
+The implementation of zfl is dependent on a few POSIX standard APIs such as \verb|pthreads| which makes it incompatible for
+running on Windows based machines. Future work could implement abstractions to call different
+platform APIs depending on compile time definitions to overcome this barrier.
 
 \section{Conclusion}
+In this paper, we describe the design and implementation of a hardware emulated FL framework zfl
+which manages to perform machine learning on the Zephyr operating system supported on
+a range of embedded platforms and architectures. The framework also collects valuable metrics such
+as network statistics including variables typically difficult to simulate such as TCP packet drops.
+We also demonstrate how this architecture allows emulating other factors such as network packet loss
+easily with existing tools.
 
 \pagebreak
 \addcontentsline{toc}{section}{References}
